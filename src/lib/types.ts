@@ -75,11 +75,12 @@ export interface PropertyResult {
   url: string;
   passed: boolean;
   reasons: string[];
+  /** The listing's own name, as athome prints it in the detail page heading. */
+  name: string;
   price: string;
   area: string;
   location: string;
   traffic: string;
-  title: string;
   fields: Record<string, string>;
 }
 

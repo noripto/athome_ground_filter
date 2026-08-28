@@ -164,6 +164,25 @@ export function parseDetailFields(doc: Document): Record<string, string> {
   return fields;
 }
 
+/**
+ * The listing's own name. athome prints it in the page heading — either a
+ * development name (「【積水ハウス】コモンステージ武蔵村山大南」) or just the
+ * neighbourhood (「久が原３丁目」). Falls back to the address when a page has
+ * no heading at all.
+ */
+function readName(doc: Document, fields: Record<string, string>, location: string): string {
+  const heading = doc.querySelector('h1')?.textContent?.replace(/\s+/g, ' ').trim();
+  return heading || findField(fields, '物件名') || location;
+}
+
+/**
+ * The price cell is assembled from separate spans (「1億」「500万円」), so the
+ * whitespace between them has to go before it reads as a single amount.
+ */
+function readPrice(fields: Record<string, string>): string {
+  return findField(fields, '価格').replace(/\s+/g, '');
+}
+
 export type DetailData = Omit<PropertyResult, 'url' | 'passed' | 'reasons'>;
 
 export async function fetchDetail(url: string, signal?: AbortSignal): Promise<DetailData | null> {
@@ -182,10 +201,10 @@ export async function fetchDetail(url: string, signal?: AbortSignal): Promise<De
 
   return {
     fields,
-    price: findField(fields, '価格'),
+    name: readName(doc, fields, location),
+    price: readPrice(fields),
     area: findField(fields, '土地面積'),
     location,
-    traffic: findField(fields, '交通'),
-    title: location || (doc.querySelector('h1')?.textContent?.replace(/\s+/g, ' ').trim() ?? '')
+    traffic: findField(fields, '交通')
   };
 }

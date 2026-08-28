@@ -32,11 +32,11 @@ function failedResult(url: string): PropertyResult {
     url,
     passed: false,
     reasons: ['詳細ページの取得に失敗しました'],
+    name: '',
     price: '',
     area: '',
     location: '',
     traffic: '',
-    title: '',
     fields: {}
   };
 }

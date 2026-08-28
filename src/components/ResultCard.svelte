@@ -15,19 +15,32 @@
       .filter(entry => entry.value !== '')
       .slice(0, maxFields)
   );
+
+  // The name falls back to the address, so only repeat it when it adds something.
+  const showLocation = $derived(property.location !== '' && property.location !== property.name);
 </script>
 
 <article class="card" class:ok={property.passed} class:ng={!property.passed}>
   <div class="top">
-    <span class="price">{property.price || '価格不明'}</span>
+    <h3 class="name">{property.name || '物件名不明'}</h3>
     <span class="badge" class:ok={property.passed}>{property.passed ? '✓ 合致' : '✗ 除外'}</span>
   </div>
 
-  {#if property.area}
-    <div class="sub">{property.area}</div>
-  {/if}
-  {#if property.location || property.title}
-    <div class="loc">{property.location || property.title}</div>
+  <dl class="headline">
+    <div class="line">
+      <dt>価格</dt>
+      <dd class="price">{property.price || '価格不明'}</dd>
+    </div>
+    {#if property.area}
+      <div class="line">
+        <dt>土地面積</dt>
+        <dd>{property.area}</dd>
+      </div>
+    {/if}
+  </dl>
+
+  {#if showLocation}
+    <div class="loc">{property.location}</div>
   {/if}
   {#if property.traffic}
     <div class="sub">{property.traffic}</div>
@@ -83,10 +96,13 @@
     align-items: flex-start;
     gap: 8px;
   }
-  .price {
-    font-size: 21px;
+  .name {
+    margin: 0;
+    font-size: 15px;
     font-weight: 700;
-    color: var(--agf-accent);
+    line-height: 1.5;
+    color: var(--agf-text);
+    word-break: break-word;
   }
   .badge {
     padding: 2px 10px;
@@ -100,6 +116,34 @@
   .badge.ok {
     background: var(--agf-ok-soft);
     color: var(--agf-ok);
+  }
+  .headline {
+    margin: 4px 0 2px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .headline .line {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .headline dt {
+    color: var(--agf-faint);
+    font-size: 11px;
+    min-width: 52px;
+    flex-shrink: 0;
+  }
+  .headline dd {
+    margin: 0;
+    font-size: 13px;
+    color: var(--agf-text);
+  }
+  .price {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--agf-accent);
+    line-height: 1.3;
   }
   .sub {
     font-size: 12px;
