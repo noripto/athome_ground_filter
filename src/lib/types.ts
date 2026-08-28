@@ -83,16 +83,23 @@ export interface PropertyResult {
   fields: Record<string, string>;
 }
 
+/** Why the crawl stopped: the goal was met, the search ran dry, or a cap hit. */
+export type StopReason = 'target' | 'exhausted' | 'limit';
+
 export interface ResultSet {
   timestamp: number;
   searchUrl: string;
-  /** Properties actually inspected (== requested count, or fewer if the search ran out). */
-  total: number;
+  /** How many passing properties were asked for. */
+  requested: number;
+  /** How many detail pages were opened to find them. */
+  inspected: number;
   passed: number;
   excluded: number;
   failed: number;
-  requested: number;
   pagesCrawled: number;
+  stoppedBy: StopReason;
+  /** The cap on inspected properties that applied to this run. */
+  inspectLimit: number;
   activeFilters: string[];
   properties: PropertyResult[];
 }

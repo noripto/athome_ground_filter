@@ -1,11 +1,13 @@
-import { AbortedError, collectDetailLinks, fetchDetail, sleep } from './crawler';
+import { AbortedError, fetchDetail, sleep, streamDetailLinks } from './crawler';
 import { describeActiveFilters, evaluate } from './evaluate';
-import type { PropertyResult, ResultSet, Settings } from './types';
+import type { PropertyResult, ResultSet, Settings, StopReason } from './types';
 
 export interface RunProgress {
   phase: 'list' | 'detail' | 'done';
   message: string;
+  /** Passing properties found so far. */
   current: number;
+  /** Passing properties still wanted. */
   total: number;
 }
 
@@ -15,6 +17,14 @@ export interface RunOptions {
   seedLinks?: string[];
   signal?: AbortSignal;
   onProgress?: (progress: RunProgress) => void;
+}
+
+/**
+ * Ceiling on detail pages opened in one run, so that a filter set nothing can
+ * satisfy stops instead of walking the entire search.
+ */
+export function inspectLimitFor(target: number): number {
+  return Math.min(1200, Math.max(200, target * 10));
 }
 
 function failedResult(url: string): PropertyResult {
@@ -32,73 +42,85 @@ function failedResult(url: string): PropertyResult {
 }
 
 /**
- * Crawls list pages, fetches each detail page and applies the filters,
- * reporting progress as it goes. Throws `AbortedError` if `signal` fires.
+ * Walks the search results until `settings.targetCount` properties have *passed*
+ * the filters — excluded ones do not count towards the goal — and reports
+ * progress as it goes. Throws `AbortedError` if `signal` fires.
  */
 export async function runFilter(options: RunOptions): Promise<ResultSet> {
   const { searchUrl, settings, seedLinks, signal, onProgress } = options;
   const target = settings.targetCount;
-
-  const { links, pagesCrawled } = await collectDetailLinks({
-    baseUrl: searchUrl,
-    target,
-    delayMs: settings.requestDelayMs,
-    signal,
-    seedLinks,
-    onProgress: (page, collected) =>
-      onProgress?.({
-        phase: 'list',
-        message: `リスト ${page} ページ目 — ${collected} / ${target} 件`,
-        current: collected,
-        total: target
-      })
-  });
+  const inspectLimit = inspectLimitFor(target);
 
   const properties: PropertyResult[] = [];
+  let pagesCrawled = 0;
+  let inspected = 0;
   let passed = 0;
   let excluded = 0;
   let failed = 0;
 
-  for (const [index, url] of links.entries()) {
-    if (signal?.aborted) throw new AbortedError();
+  const links = streamDetailLinks({
+    baseUrl: searchUrl,
+    delayMs: settings.requestDelayMs,
+    signal,
+    seedLinks,
+    onPage: (pages, linksSeen) => {
+      pagesCrawled = pages;
+      onProgress?.({
+        phase: 'list',
+        message: `リスト ${pages} ページ目（候補 ${linksSeen}件）`,
+        current: passed,
+        total: target
+      });
+    }
+  });
 
+  for await (const url of links) {
+    if (signal?.aborted) throw new AbortedError();
+    if (passed >= target || inspected >= inspectLimit) break;
+    if (inspected > 0) await sleep(settings.requestDelayMs);
+
+    inspected++;
     onProgress?.({
       phase: 'detail',
-      message: `詳細取得中 ${index + 1} / ${links.length}`,
-      current: index + 1,
-      total: links.length
+      message: `合致 ${passed} / ${target}件（${inspected}件目を確認中）`,
+      current: passed,
+      total: target
     });
 
     const detail = await fetchDetail(url, signal);
     if (!detail) {
       failed++;
       properties.push(failedResult(url));
-    } else {
-      const reasons = evaluate(settings.filters, detail.fields);
-      if (reasons.length === 0) passed++;
-      else excluded++;
-      properties.push({ url, passed: reasons.length === 0, reasons, ...detail });
+      continue;
     }
 
-    if (index < links.length - 1) await sleep(settings.requestDelayMs);
+    const reasons = evaluate(settings.filters, detail.fields);
+    if (reasons.length === 0) passed++;
+    else excluded++;
+    properties.push({ url, passed: reasons.length === 0, reasons, ...detail });
   }
+
+  const stoppedBy: StopReason =
+    passed >= target ? 'target' : inspected >= inspectLimit ? 'limit' : 'exhausted';
 
   onProgress?.({
     phase: 'done',
-    message: '完了',
-    current: links.length,
-    total: links.length
+    message: `完了 — 合致 ${passed}件（${inspected}件を確認）`,
+    current: passed,
+    total: target
   });
 
   return {
     timestamp: Date.now(),
     searchUrl,
-    total: links.length,
+    requested: target,
+    inspected,
     passed,
     excluded,
     failed,
-    requested: target,
     pagesCrawled,
+    stoppedBy,
+    inspectLimit,
     activeFilters: describeActiveFilters(settings.filters),
     properties: settings.keepExcluded ? properties : properties.filter(p => p.passed)
   };

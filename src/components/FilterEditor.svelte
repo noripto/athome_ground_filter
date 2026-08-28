@@ -1,13 +1,8 @@
 <script lang="ts">
   import FilterRow from './FilterRow.svelte';
-  import {
-    COUNT_PRESETS,
-    FILTER_DEFS,
-    MAX_TARGET_COUNT,
-    SECTIONS,
-    getFilterDef
-  } from '../lib/config';
+  import { COUNT_PRESETS, FILTER_DEFS, SECTIONS, getFilterDef } from '../lib/config';
   import { describeActiveFilters } from '../lib/evaluate';
+  import { inspectLimitFor } from '../lib/run';
   import { loadSettings, resetSettings, saveSettings } from '../lib/storage';
   import type { Settings } from '../lib/types';
 
@@ -24,6 +19,7 @@
   let noticeTimer: ReturnType<typeof setTimeout> | undefined;
 
   const activeSummary = $derived(settings ? describeActiveFilters(settings.filters) : []);
+  const inspectLimit = $derived(inspectLimitFor(settings?.targetCount ?? 0));
 
   loadSettings().then(loaded => {
     settings = loaded;
@@ -37,10 +33,6 @@
 
   async function save() {
     if (!settings) return;
-    settings.targetCount = Math.min(
-      MAX_TARGET_COUNT,
-      Math.max(1, Math.round(settings.targetCount) || 1)
-    );
     await saveSettings($state.snapshot(settings));
     const active = activeSummary.length;
     flash(`✓ 保存しました（有効な条件: ${active ? `${active}件` : 'なし'}）`);
@@ -76,25 +68,20 @@
       <div class="section-title">クロール設定</div>
 
       <div class="crawl">
-        <label class="crawl-label" for="agf-target-count">取得件数</label>
-        <input
-          id="agf-target-count"
-          class="agf-num"
-          type="number"
-          min="1"
-          max={MAX_TARGET_COUNT}
-          bind:value={settings.targetCount}
-        />
-        <span class="agf-unit">件（最大 {MAX_TARGET_COUNT}）</span>
+        <span class="crawl-label">合致件数</span>
         <div class="presets">
           {#each COUNT_PRESETS as preset (preset)}
             <button
               type="button"
               class="preset"
               class:active={settings.targetCount === preset}
-              onclick={() => settings && (settings.targetCount = preset)}>{preset}</button
+              onclick={() => settings && (settings.targetCount = preset)}>{preset}件</button
             >
           {/each}
+        </div>
+        <div class="crawl-help">
+          条件に合致した物件がこの件数に達するまでページを辿ります。除外された物件は件数に含まれません。
+          合致が集まらない場合は、詳細ページを {inspectLimit} 件確認した時点で打ち切ります。
         </div>
       </div>
 
@@ -216,6 +203,12 @@
     min-width: 132px;
     font-weight: 600;
     font-size: 13px;
+  }
+  .crawl-help {
+    width: 100%;
+    font-size: 11px;
+    color: #aaa;
+    line-height: 1.7;
   }
   .crawl-check {
     display: flex;

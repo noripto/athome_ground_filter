@@ -40,12 +40,12 @@
 
   <div class="info">
     {#if settings}
-      <div class="info-line"><span class="key">取得件数</span>{settings.targetCount}件</div>
+      <div class="info-line"><span class="key">合致件数</span>{settings.targetCount}件まで</div>
     {/if}
     {#if results}
       <div class="info-line">
         <span class="key">前回の結果</span>
-        合致 {results.passed} / 除外 {results.excluded}
+        合致 {results.passed} / {results.requested}（{results.inspected}件を確認）
       </div>
     {/if}
   </div>

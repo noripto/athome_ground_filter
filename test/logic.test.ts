@@ -6,6 +6,7 @@
 import { buildPageUrl } from '../src/lib/crawler';
 import { describeActiveFilters, evaluate, findField } from '../src/lib/evaluate';
 import { getDefaultSettings } from '../src/lib/config';
+import { inspectLimitFor } from '../src/lib/run';
 
 let failures = 0;
 
@@ -40,6 +41,13 @@ eq(
   buildPageUrl('https://www.athome.co.jp/tochi/chuko/tokyo/list/2/', 3),
   'https://www.athome.co.jp/tochi/chuko/tokyo/list/3/?limit=30'
 );
+
+// ── Inspection ceiling ──────────────────────────────────────────────────────
+// The requested count is a number of *passing* properties, so the crawl needs a
+// separate ceiling on how many detail pages it is willing to open looking for them.
+eq('a small goal still gets a usable budget', inspectLimitFor(5), 200);
+eq('the budget is ten times the goal', inspectLimitFor(30), 300);
+eq('the budget is capped', inspectLimitFor(500), 1200);
 
 // ── Field lookup ────────────────────────────────────────────────────────────
 eq('keys match partially', findField({ 接道状況: '南 幅員4.5m' }, '接道'), '南 幅員4.5m');

@@ -29,6 +29,15 @@
   ];
 
   const crawledAt = $derived(new Date(results.timestamp).toLocaleString('ja-JP'));
+
+  // Only worth saying something when the run fell short of the requested count.
+  const stopNote = $derived(
+    results.stoppedBy === 'target'
+      ? ''
+      : results.stoppedBy === 'exhausted'
+        ? `⚠ 指定の ${results.requested}件に届く前に検索結果が尽きました（検索条件を広げてください）`
+        : `⚠ 確認件数の上限 ${results.inspectLimit}件に達したため中断しました（条件が厳しすぎる可能性があります）`
+  );
 </script>
 
 <div class="view">
@@ -36,14 +45,16 @@
     <div class="head-main">
       <h1>🏗 土地フィルター 結果</h1>
       <div class="stats">
-        <span class="stat">検査 {results.total} / 指定 {results.requested}件</span>
-        <span class="stat ok">✓ 合致 {results.passed}件</span>
+        <span class="stat ok">✓ 合致 {results.passed} / 指定 {results.requested}件</span>
         <span class="stat ng">✗ 除外 {results.excluded}件</span>
         {#if results.failed}
           <span class="stat">取得失敗 {results.failed}件</span>
         {/if}
-        <span class="stat">リスト {results.pagesCrawled}ページ</span>
+        <span class="stat">確認 {results.inspected}件 / {results.pagesCrawled}ページ</span>
       </div>
+      {#if stopNote}
+        <div class="meta warn">{stopNote}</div>
+      {/if}
       <div class="meta">取得日時: {crawledAt}</div>
       {#if results.activeFilters.length}
         <div class="meta">適用条件: {results.activeFilters.join(' ／ ')}</div>

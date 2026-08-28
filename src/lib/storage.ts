@@ -1,4 +1,4 @@
-import { getDefaultFilters, getDefaultSettings } from './config';
+import { COUNT_PRESETS, getDefaultFilters, getDefaultSettings } from './config';
 import type { FilterSettings, ResultSet, Settings } from './types';
 
 const SETTINGS_KEY = 'agfSettings';
@@ -17,8 +17,15 @@ function normalize(stored: Partial<Settings> | undefined): Settings {
     if (id in filters) filters[id] = { ...filters[id], ...state };
   }
 
+  // The count is chosen from buttons, so anything else came from an older
+  // build and is dropped rather than leaving no button highlighted.
+  const targetCount =
+    stored.targetCount !== undefined && COUNT_PRESETS.includes(stored.targetCount)
+      ? stored.targetCount
+      : defaults.targetCount;
+
   return {
-    targetCount: stored.targetCount ?? defaults.targetCount,
+    targetCount,
     requestDelayMs: stored.requestDelayMs ?? defaults.requestDelayMs,
     keepExcluded: stored.keepExcluded ?? defaults.keepExcluded,
     filters

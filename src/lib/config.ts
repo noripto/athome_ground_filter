@@ -202,11 +202,11 @@ export const SECTIONS: { title: string; ids: string[] }[] = [
   { title: '数値範囲', ids: ['kenpeito', 'yosekiritsu', 'menseki', 'kakaku'] }
 ];
 
-export const COUNT_PRESETS = [30, 50, 100, 200] as const;
+/** The only values the count buttons offer, and so the only valid counts. */
+export const COUNT_PRESETS: readonly number[] = [30, 50, 100, 200];
 
 export const DEFAULT_TARGET_COUNT = 30;
 export const DEFAULT_REQUEST_DELAY_MS = 400;
-export const MAX_TARGET_COUNT = 500;
 
 export function getFilterDef(id: string): FilterDef | undefined {
   return FILTER_DEFS.find(d => d.id === id);

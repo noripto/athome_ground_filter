@@ -1,7 +1,7 @@
 <script lang="ts">
   import FilterEditor from '../components/FilterEditor.svelte';
   import ResultsView from '../components/ResultsView.svelte';
-  import { COUNT_PRESETS, MAX_TARGET_COUNT } from '../lib/config';
+  import { COUNT_PRESETS } from '../lib/config';
   import { AbortedError, extractDetailLinks } from '../lib/crawler';
   import { runFilter, type RunProgress } from '../lib/run';
   import { loadSettings, onSettingsChanged, saveResults, saveSettings } from '../lib/storage';
@@ -32,7 +32,7 @@
 
   async function setTargetCount(value: number) {
     if (!settings) return;
-    settings.targetCount = Math.min(MAX_TARGET_COUNT, Math.max(1, Math.round(value) || 1));
+    settings.targetCount = value;
     await saveSettings($state.snapshot(settings));
   }
 
@@ -60,7 +60,7 @@
 
       results = resultSet;
       await saveResults(resultSet);
-      status = `完了 — 合致 ${resultSet.passed}件 / 除外 ${resultSet.excluded}件`;
+      status = `完了 — 合致 ${resultSet.passed}件（${resultSet.inspected}件を確認）`;
       overlay = 'results';
     } catch (err) {
       progress = null;
@@ -103,18 +103,7 @@
     {#if !settings}
       <p class="loading">読み込み中…</p>
     {:else}
-      <div class="count">
-        <label for="agf-panel-count">件数</label>
-        <input
-          id="agf-panel-count"
-          type="number"
-          min="1"
-          max={MAX_TARGET_COUNT}
-          value={settings.targetCount}
-          disabled={running}
-          onchange={e => setTargetCount(Number(e.currentTarget.value))}
-        />
-      </div>
+      <div class="count" title="除外された物件はこの件数に含まれません">合致件数</div>
       <div class="presets">
         {#each COUNT_PRESETS as preset (preset)}
           <button
@@ -146,7 +135,7 @@
 
       {#if results}
         <div class="summary">
-          <span class="ok">✓ 合致 {results.passed}件</span>
+          <span class="ok">✓ 合致 {results.passed} / {results.requested}件</span>
           <span class="ng">✗ 除外 {results.excluded}件</span>
           {#if results.failed}<span class="faint">失敗 {results.failed}件</span>{/if}
         </div>
@@ -224,22 +213,9 @@
     color: var(--agf-muted);
   }
   .count {
-    display: flex;
-    align-items: center;
-    gap: 8px;
     font-size: 12px;
     color: #666;
-    margin-bottom: 6px;
-  }
-  .count input {
-    flex: 1;
-    padding: 4px 8px;
-    border: 1px solid #ccc;
-    border-radius: 5px;
-    font: inherit;
-    font-size: 13px;
-    text-align: right;
-    min-width: 0;
+    margin-bottom: 5px;
   }
   .presets {
     display: flex;
