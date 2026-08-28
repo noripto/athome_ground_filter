@@ -1,0 +1,40 @@
+{
+  "name": "athome-ground-filter",
+  "version": "1.0.0",
+  "description": "athome.co.jp の土地検索を詳細条件でクロール・フィルタリングする Chrome 拡張",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "pnpm run clean && pnpm run build:pages && pnpm run build:content",
+    "build:pages": "vite build",
+    "build:content": "vite build --config vite.content.config.ts",
+    "dev": "vite build --watch",
+    "dev:content": "vite build --watch --config vite.content.config.ts",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "test": "node scripts/run-tests.mjs",
+    "verify": "pnpm run format:check && pnpm run lint && pnpm run check && pnpm run test"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^5.0.3",
+    "@tsconfig/svelte": "^5.0.4",
+    "@types/chrome": "^0.0.300",
+    "@types/node": "^22.20.1",
+    "oxlint": "^1.0.0",
+    "prettier": "^3.4.2",
+    "prettier-plugin-svelte": "^3.3.3",
+    "svelte": "^5.19.0",
+    "svelte-check": "^4.1.4",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.11"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

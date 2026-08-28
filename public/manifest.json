@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "AtHome 土地フィルター",
+  "version": "1.0.0",
+  "description": "athome.co.jp の土地検索を詳細条件でクロール・フィルタリングし、指定件数の結果を表示します",
+  "permissions": ["storage", "tabs"],
+  "host_permissions": ["https://www.athome.co.jp/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://www.athome.co.jp/tochi/*/list/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["results.html", "assets/*"],
+      "matches": ["https://www.athome.co.jp/*"]
+    }
+  ],
+  "options_page": "options.html",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "AtHome 土地フィルター"
+  }
+}

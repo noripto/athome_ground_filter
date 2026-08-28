@@ -1,0 +1,40 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "ignorePatterns": ["dist/**", "node_modules/**"],
+  "env": {
+    "browser": true,
+    "es2024": true
+  },
+  "globals": {
+    "chrome": "readonly"
+  },
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn",
+    "perf": "warn"
+  },
+  "rules": {
+    "eqeqeq": ["error", "smart"],
+    "no-console": ["warn", { "allow": ["warn", "error"] }],
+    "no-unused-vars": ["error", { "args": "after-used", "argsIgnorePattern": "^_" }],
+    "prefer-const": "error",
+    "no-var": "error",
+
+    // Crawling is deliberately sequential: pages are fetched one at a time with
+    // a delay in between so the site is not hammered with parallel requests.
+    "no-await-in-loop": "off",
+
+    // `__AGF_INLINE_CSS__` is a build-time token, not a private field.
+    "no-underscore-dangle": "off"
+  },
+
+  "overrides": [
+    {
+      // The test runner reports its results on stdout.
+      "files": ["test/**", "scripts/**"],
+      "rules": {
+        "no-console": "off"
+      }
+    }
+  ]
+}
