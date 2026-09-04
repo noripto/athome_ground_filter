@@ -1,33 +1,28 @@
 <script lang="ts">
   import FilterEditor from '../components/FilterEditor.svelte';
-  import ResultsView from '../components/ResultsView.svelte';
   import { COUNT_PRESETS, countLabel } from '../lib/config';
-  import { AbortedError } from '../lib/fetcher';
-  import { runFilter, type RunProgress } from '../lib/run';
-  import { loadSettings, onSettingsChanged, saveResults, saveSettings } from '../lib/storage';
-  import type { ResultSet, Settings } from '../lib/types';
-
-  type Overlay = 'none' | 'settings' | 'results';
+  import { describeActiveFilters } from '../lib/evaluate';
+  import { loadSettings, onSettingsChanged, saveSettings } from '../lib/storage';
+  import type { Settings } from '../lib/types';
 
   let settings = $state<Settings | null>(null);
-  let overlay = $state<Overlay>('none');
+  let showSettings = $state(false);
   let collapsed = $state(false);
-  let running = $state(false);
-  let status = $state('');
-  let error = $state('');
-  let progress = $state<RunProgress | null>(null);
-  let results = $state<ResultSet | null>(null);
-  let controller: AbortController | null = null;
 
-  const percent = $derived(
-    progress && progress.total > 0 ? Math.round((progress.current / progress.total) * 100) : 0
-  );
+  const activeFilters = $derived(settings ? describeActiveFilters(settings.filters) : []);
+
+  // athome prints the search's own hit count in the page header. Showing it
+  // here is what makes「全件」a number the user can weigh before starting.
+  const hitCount = $derived.by(() => {
+    const text = document.querySelector('.area-top__property--number')?.textContent ?? '';
+    const count = Number.parseInt(text.replace(/,/g, ''), 10);
+    return Number.isFinite(count) ? count : null;
+  });
 
   loadSettings().then(loaded => {
     settings = loaded;
   });
 
-  // Keep the panel in sync when the options page saves a change.
   $effect(() => onSettingsChanged(next => (settings = next)));
 
   async function setTargetCount(value: number) {
@@ -36,51 +31,21 @@
     await saveSettings($state.snapshot(settings));
   }
 
-  async function run() {
-    if (!settings || running) return;
-
-    running = true;
-    error = '';
-    results = null;
-    progress = null;
-    status = '検索結果を読み取り中…';
-    controller = new AbortController();
-
-    try {
-      const resultSet = await runFilter({
-        searchUrl: window.location.href,
-        settings: $state.snapshot(settings),
-        signal: controller.signal,
-        onProgress: next => {
-          progress = next;
-          status = next.message;
-        }
-      });
-
-      results = resultSet;
-      await saveResults(resultSet);
-      status = `完了 — 合致 ${resultSet.passed}件（${resultSet.inspected}件を確認）`;
-      overlay = 'results';
-    } catch (err) {
-      progress = null;
-      if (err instanceof AbortedError) {
-        status = '中断しました';
-      } else {
-        status = '';
-        error = err instanceof Error ? err.message : String(err);
-        console.error('[AGF]', err);
-      }
-    } finally {
-      running = false;
-      controller = null;
-    }
+  /**
+   * The crawl runs in the extension's own tab rather than here. A full search
+   * takes long enough that navigating away or closing this tab would throw the
+   * work away, and content scripts cannot reach `chrome.tabs` — but
+   * results.html is web-accessible, so opening it by URL works and carries the
+   * search along with it.
+   */
+  function start() {
+    const url = new URL(chrome.runtime.getURL('results.html'));
+    url.searchParams.set('search', window.location.href);
+    url.searchParams.set('autostart', '1');
+    window.open(url.toString(), '_blank', 'noopener');
   }
 
-  function cancel() {
-    controller?.abort();
-  }
-
-  function openInTab() {
+  function openResults() {
     window.open(chrome.runtime.getURL('results.html'), '_blank', 'noopener');
   }
 </script>
@@ -94,14 +59,17 @@
       onclick={() => (collapsed = !collapsed)}>{collapsed ? '▸' : '▾'}</button
     >
     <span class="title">🏗 土地フィルター</span>
-    <button type="button" class="gear" title="設定" onclick={() => (overlay = 'settings')}>⚙</button
-    >
+    <button type="button" class="gear" title="設定" onclick={() => (showSettings = true)}>⚙</button>
   </div>
 
   {#if !collapsed}
     {#if !settings}
       <p class="loading">読み込み中…</p>
     {:else}
+      {#if hitCount !== null}
+        <div class="hits">この検索の該当物件数 <b>{hitCount.toLocaleString('ja-JP')}</b> 件</div>
+      {/if}
+
       <div class="count" title="除外された物件はこの件数に含まれません">合致件数</div>
       <div class="presets">
         {#each COUNT_PRESETS as preset (preset)}
@@ -109,56 +77,30 @@
             type="button"
             class="preset"
             class:active={settings.targetCount === preset}
-            disabled={running}
             onclick={() => setTargetCount(preset)}>{countLabel(preset)}</button
           >
         {/each}
       </div>
 
-      {#if running}
-        <button type="button" class="run cancel" onclick={cancel}>中断する</button>
+      <button type="button" class="run" onclick={start}>🚀 取得を開始</button>
+      <div class="note">別タブで実行します。このページを閉じても取得は続きます。</div>
+
+      {#if activeFilters.length}
+        <div class="filters">条件: {activeFilters.join(' ／ ')}</div>
       {:else}
-        <button type="button" class="run" onclick={run}>フィルター実行</button>
+        <div class="filters warn">⚠ 有効な条件がありません（全件通過）</div>
       {/if}
 
-      <!-- A「全件」run has no goal to measure against, so it shows no bar. -->
-      {#if progress && progress.total > 0}
-        <div class="bar"><div class="fill" style:width="{percent}%"></div></div>
-      {/if}
-
-      {#if status}
-        <div class="status">{status}</div>
-      {/if}
-      {#if error}
-        <div class="error">エラー: {error}</div>
-      {/if}
-
-      {#if results}
-        <div class="summary">
-          <span class="ok">
-            ✓ 合致 {results.passed}{results.requested > 0 ? ` / ${results.requested}` : ''}件
-          </span>
-          <span class="ng">✗ 除外 {results.excluded}件</span>
-          {#if results.failed}<span class="faint">失敗 {results.failed}件</span>{/if}
-        </div>
-        <button type="button" class="secondary" onclick={() => (overlay = 'results')}>
-          📄 結果を表示
-        </button>
-        <button type="button" class="secondary ghost" onclick={openInTab}>
-          ↗ 新しいタブで開く
-        </button>
-      {/if}
+      <button type="button" class="secondary ghost" onclick={openResults}>
+        📄 前回の結果を開く
+      </button>
     {/if}
   {/if}
 </div>
 
-{#if overlay === 'settings'}
+{#if showSettings}
   <div class="overlay">
-    <FilterEditor onclose={() => (overlay = 'none')} />
-  </div>
-{:else if overlay === 'results' && results}
-  <div class="overlay">
-    <ResultsView {results} onclose={() => (overlay = 'none')} />
+    <FilterEditor onclose={() => (showSettings = false)} />
   </div>
 {/if}
 
@@ -214,6 +156,18 @@
     font-size: 12px;
     color: var(--agf-muted);
   }
+  .hits {
+    font-size: 12px;
+    color: #555;
+    background: #f4f6f7;
+    border-radius: 5px;
+    padding: 5px 8px;
+    margin-bottom: 8px;
+  }
+  .hits b {
+    color: var(--agf-accent);
+    font-size: 14px;
+  }
   .count {
     font-size: 12px;
     color: #666;
@@ -240,10 +194,6 @@
     color: #fff;
     border-color: var(--agf-accent);
   }
-  .preset:disabled {
-    cursor: not-allowed;
-    opacity: 0.6;
-  }
   .run {
     width: 100%;
     padding: 8px;
@@ -259,60 +209,27 @@
   .run:hover {
     background: var(--agf-accent-dark);
   }
-  .run.cancel {
-    background: #777;
-  }
-  .run.cancel:hover {
-    background: #555;
-  }
-  .bar {
-    width: 100%;
-    height: 4px;
-    background: #eee;
-    border-radius: 2px;
-    margin: 8px 0 4px;
-    overflow: hidden;
-  }
-  .fill {
-    height: 100%;
-    background: var(--agf-accent);
-    transition: width 0.3s;
-  }
-  .status {
-    font-size: 11px;
-    color: var(--agf-muted);
-    margin-top: 6px;
-    min-height: 16px;
-  }
-  .error {
-    font-size: 11px;
-    color: var(--agf-accent);
-    font-weight: 600;
-    margin-top: 4px;
-  }
-  .summary {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    font-size: 12px;
-    margin: 6px 0;
-  }
-  .summary .ok {
-    color: var(--agf-ok);
-    font-weight: 700;
-  }
-  .summary .ng {
-    color: var(--agf-accent);
-    font-weight: 700;
-  }
-  .summary .faint {
+  .note {
+    font-size: 10px;
     color: #aaa;
+    line-height: 1.6;
+    margin-top: 5px;
+  }
+  .filters {
+    font-size: 10px;
+    color: var(--agf-muted);
+    line-height: 1.6;
+    margin-top: 8px;
+    word-break: break-all;
+  }
+  .filters.warn {
+    color: var(--agf-accent);
   }
   .secondary {
     display: block;
     width: 100%;
     padding: 6px;
-    margin-top: 6px;
+    margin-top: 8px;
     background: var(--agf-link);
     color: #fff;
     border: none;
@@ -320,9 +237,6 @@
     cursor: pointer;
     font: inherit;
     font-size: 12px;
-  }
-  .secondary:hover {
-    background: var(--agf-link-dark);
   }
   .secondary.ghost {
     background: #ecf0f1;

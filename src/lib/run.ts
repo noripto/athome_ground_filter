@@ -81,8 +81,9 @@ function prefilteredResult(listing: Listing, reasons: string[]): PropertyResult 
 
 /**
  * Walks the search results until `settings.targetCount` properties have *passed*
- * the filters — excluded ones do not count towards the goal — and reports
- * progress as it goes. Throws `AbortedError` if `signal` fires.
+ * the filters — excluded ones do not count towards the goal, and zero means
+ * every result there is — reporting progress as it goes. Cancelling through
+ * `signal` ends the run and returns what it has, rather than failing.
  */
 export async function runFilter(options: RunOptions): Promise<ResultSet> {
   const { searchUrl, settings, signal, onProgress } = options;
@@ -160,10 +161,13 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
       properties.push({ url: listing.url, passed: reasons.length === 0, reasons, ...detail });
     }
   } catch (err) {
-    // Being blocked ends the run, but everything read up to that point is
-    // still worth keeping and worth explaining.
-    if (!(err instanceof BlockedError)) throw err;
-    report.stoppedBy = 'blocked';
+    // Both of these end the run rather than fail it. A crawl of a whole search
+    // runs long enough that throwing away what it already read — because the
+    // user pressed cancel, or because the site started challenging — would be
+    // the worse outcome by far.
+    if (err instanceof AbortedError) report.stoppedBy = 'aborted';
+    else if (err instanceof BlockedError) report.stoppedBy = 'blocked';
+    else throw err;
   }
 
   const stoppedBy = resolveStopReason(report, passed, target, inspected, inspectLimit);
