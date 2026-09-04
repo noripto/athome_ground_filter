@@ -1,13 +1,12 @@
 import { MAX_DETAIL_FETCHES } from './config';
 import {
-  AbortedError,
   fetchDetail,
   newListCrawlReport,
-  sleep,
   streamDetailLinks,
   type ListCrawlReport
 } from './crawler';
 import { describeActiveFilters, evaluate } from './evaluate';
+import { AbortedError, BlockedError, newPacer, paceDelay, sleep } from './fetcher';
 import type { PropertyResult, ResultSet, Settings, StopReason } from './types';
 
 export interface RunProgress {
@@ -78,6 +77,10 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
 
   const properties: PropertyResult[] = [];
   const report = newListCrawlReport();
+  // One pace for the whole run: a challenge met while reading list pages has
+  // to slow the detail fetches down too, or the crawl walks straight back into
+  // the same wall.
+  const pacer = newPacer();
   let inspected = 0;
   let passed = 0;
   let excluded = 0;
@@ -87,6 +90,7 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
     baseUrl: searchUrl,
     delayMs: settings.requestDelayMs,
     signal,
+    pacer,
     report,
     onPage: (progress, linksSeen) => {
       const of = progress.totalCount === null ? '' : ` / 全 ${progress.totalCount}件`;
@@ -99,34 +103,41 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
     }
   });
 
-  for await (const url of links) {
-    if (signal?.aborted) throw new AbortedError();
-    if (target > 0 && passed >= target) break;
-    if (inspected >= inspectLimit) break;
-    if (inspected > 0) await sleep(settings.requestDelayMs);
+  try {
+    for await (const url of links) {
+      if (signal?.aborted) throw new AbortedError();
+      if (target > 0 && passed >= target) break;
+      if (inspected >= inspectLimit) break;
+      if (inspected > 0) await sleep(paceDelay(settings.requestDelayMs, pacer.cooldownMs));
 
-    inspected++;
-    onProgress?.({
-      phase: 'detail',
-      message:
-        target > 0
-          ? `合致 ${passed} / ${target}件（${inspected}件目を確認中）`
-          : `合致 ${passed}件（${inspected}件目を確認中）`,
-      current: passed,
-      total: target
-    });
+      inspected++;
+      onProgress?.({
+        phase: 'detail',
+        message:
+          target > 0
+            ? `合致 ${passed} / ${target}件（${inspected}件目を確認中）`
+            : `合致 ${passed}件（${inspected}件目を確認中）`,
+        current: passed,
+        total: target
+      });
 
-    const detail = await fetchDetail(url, signal);
-    if (!detail) {
-      failed++;
-      properties.push(failedResult(url));
-      continue;
+      const detail = await fetchDetail(url, signal, pacer);
+      if (!detail) {
+        failed++;
+        properties.push(failedResult(url));
+        continue;
+      }
+
+      const reasons = evaluate(settings.filters, detail.fields);
+      if (reasons.length === 0) passed++;
+      else excluded++;
+      properties.push({ url, passed: reasons.length === 0, reasons, ...detail });
     }
-
-    const reasons = evaluate(settings.filters, detail.fields);
-    if (reasons.length === 0) passed++;
-    else excluded++;
-    properties.push({ url, passed: reasons.length === 0, reasons, ...detail });
+  } catch (err) {
+    // Being blocked ends the run, but everything read up to that point is
+    // still worth keeping and worth explaining.
+    if (!(err instanceof BlockedError)) throw err;
+    report.stoppedBy = 'blocked';
   }
 
   const stoppedBy = resolveStopReason(report, passed, target, inspected, inspectLimit);

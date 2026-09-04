@@ -1,5 +1,15 @@
 import { LIST_PAGE_SIZE, MAX_LIST_PAGES } from './config';
 import { findField } from './evaluate';
+import {
+  AbortedError,
+  BlockedError,
+  fetchPage,
+  paceDelay,
+  sleep,
+  throwIfAborted,
+  type Pacer,
+  type PageOutcome
+} from './fetcher';
 import type { PropertyResult, StopReason } from './types';
 
 /** Property detail URLs look like /tochi/[area/]1234567/ — the digits are the id. */
@@ -11,19 +21,6 @@ const DETAIL_URL_RE = /www\.athome\.co\.jp\/tochi\/(?:[^/\d][^/]*\/)?(\d{7,})\//
  * the surrounding text.
  */
 const TOTAL_COUNT_RE = /area-top__property--number[^>]*>\s*([\d,]+)\s*</;
-
-export const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
-
-export class AbortedError extends Error {
-  constructor() {
-    super('中断しました');
-    this.name = 'AbortedError';
-  }
-}
-
-function throwIfAborted(signal?: AbortSignal): void {
-  if (signal?.aborted) throw new AbortedError();
-}
 
 function detailUrlFromId(id: string): string {
   return `https://www.athome.co.jp/tochi/${id}/`;
@@ -83,15 +80,6 @@ export function expectedPages(total: number | null, pageSize: number): number | 
   return Math.ceil(total / pageSize);
 }
 
-type FetchedPage = { ok: true; html: string; doc: Document } | { ok: false; status: number };
-
-async function fetchPage(url: string, signal?: AbortSignal): Promise<FetchedPage> {
-  const res = await fetch(url, { credentials: 'include', signal });
-  if (!res.ok) return { ok: false, status: res.status };
-  const html = await res.text();
-  return { ok: true, html, doc: new DOMParser().parseFromString(html, 'text/html') };
-}
-
 /** What a list crawl learned on the way, and how it ended. */
 export interface ListCrawlReport {
   pagesCrawled: number;
@@ -114,6 +102,8 @@ export interface LinkStreamOptions {
   delayMs: number;
   pageSize?: number;
   signal?: AbortSignal;
+  /** Shared with the detail fetches, so one crawl has one pace. */
+  pacer?: Pacer;
   /** Filled in as the crawl runs, so the caller can report how it ended. */
   report: ListCrawlReport;
   /** Called once per list page read, with the running totals. */
@@ -132,7 +122,7 @@ export interface LinkStreamOptions {
  * search results at all.
  */
 export async function* streamDetailLinks(options: LinkStreamOptions): AsyncGenerator<string> {
-  const { baseUrl, delayMs, pageSize = LIST_PAGE_SIZE, signal, report, onPage } = options;
+  const { baseUrl, delayMs, pageSize = LIST_PAGE_SIZE, signal, pacer, report, onPage } = options;
 
   const seen = new Set<string>();
   let previousIds: string[] = [];
@@ -140,22 +130,29 @@ export async function* streamDetailLinks(options: LinkStreamOptions): AsyncGener
 
   while (page <= MAX_LIST_PAGES) {
     throwIfAborted(signal);
-    await sleep(delayMs);
+    await sleep(paceDelay(delayMs, pacer?.cooldownMs));
 
     const url = buildPageUrl(baseUrl, page, pageSize);
-    const fetched = await fetchPage(url, signal);
+    const outcome = await fetchPage(url, { signal, pacer });
 
-    if (!fetched.ok) {
-      // Past the last page athome will serve, a page number 404s. Anything
+    if (outcome.kind !== 'ok') {
+      // Past the last page athome will serve, a page number 404s. Everything
       // else is a failure the run should own up to rather than report as a
       // search that ran dry.
-      report.stoppedBy = fetched.status === 404 && page > 1 ? 'exhausted' : 'http';
+      report.stoppedBy =
+        outcome.kind === 'notfound'
+          ? page > 1
+            ? 'exhausted'
+            : 'http'
+          : outcome.kind === 'challenged'
+            ? 'blocked'
+            : 'http';
       return;
     }
 
-    if (report.totalCount === null) report.totalCount = parseTotalCount(fetched.html);
+    if (report.totalCount === null) report.totalCount = parseTotalCount(outcome.html);
 
-    const ids = extractDetailLinks(fetched.doc, url);
+    const ids = extractDetailLinks(outcome.doc, url);
 
     // athome answers a page number it does not understand by serving page one,
     // so a page identical to the one before it means paging is broken rather
@@ -248,18 +245,30 @@ function readPrice(fields: Record<string, string>): string {
 
 export type DetailData = Omit<PropertyResult, 'url' | 'passed' | 'reasons'>;
 
-export async function fetchDetail(url: string, signal?: AbortSignal): Promise<DetailData | null> {
-  let fetched: FetchedPage;
+/**
+ * Reads one detail page. A missing or broken page is that property's problem
+ * and returns null, but a bot check is the whole run's problem: every later
+ * fetch would fail the same way, quietly burning through the inspection budget
+ * as if the filters were simply strict.
+ */
+export async function fetchDetail(
+  url: string,
+  signal?: AbortSignal,
+  pacer?: Pacer
+): Promise<DetailData | null> {
+  let outcome: PageOutcome;
   try {
-    fetched = await fetchPage(url, signal);
+    outcome = await fetchPage(url, { signal, pacer });
   } catch (err) {
-    if (signal?.aborted) throw new AbortedError();
+    if (err instanceof AbortedError) throw err;
     console.warn('[AGF] 詳細取得に失敗:', url, err);
     return null;
   }
-  if (!fetched.ok) return null;
 
-  const doc = fetched.doc;
+  if (outcome.kind === 'challenged') throw new BlockedError();
+  if (outcome.kind !== 'ok') return null;
+
+  const doc = outcome.doc;
   const fields = parseDetailFields(doc);
   const location = findField(fields, '所在地');
 

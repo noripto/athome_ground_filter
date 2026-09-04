@@ -2,7 +2,7 @@
   import FilterEditor from '../components/FilterEditor.svelte';
   import ResultsView from '../components/ResultsView.svelte';
   import { COUNT_PRESETS, countLabel } from '../lib/config';
-  import { AbortedError } from '../lib/crawler';
+  import { AbortedError } from '../lib/fetcher';
   import { runFilter, type RunProgress } from '../lib/run';
   import { loadSettings, onSettingsChanged, saveResults, saveSettings } from '../lib/storage';
   import type { ResultSet, Settings } from '../lib/types';

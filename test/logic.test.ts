@@ -7,6 +7,14 @@ import { buildPageUrl, expectedPages, parseTotalCount } from '../src/lib/crawler
 import { describeActiveFilters, evaluate, findField } from '../src/lib/evaluate';
 import { getDefaultSettings, LIST_PAGE_SIZE } from '../src/lib/config';
 import { inspectLimitFor, resolveStopReason } from '../src/lib/run';
+import {
+  backoffDelay,
+  isChallengeHtml,
+  newPacer,
+  paceDelay,
+  policyForStatus,
+  retryAfterMs
+} from '../src/lib/fetcher';
 import type { ListCrawlReport } from '../src/lib/crawler';
 
 let failures = 0;
@@ -99,6 +107,104 @@ eq(
   'a still-running list defaults to exhausted',
   resolveStopReason(report(null), 5, 30, 40, 300),
   'exhausted'
+);
+
+// ── Bot check ───────────────────────────────────────────────────────────────
+// athome serves its challenge with a 200, so nothing but the body gives it away.
+eq(
+  'the interstitial is recognised',
+  isChallengeHtml(
+    '<title>【アットホーム】認証中</title><script>window.reeseSkipExpirationCheck</script>'
+  ),
+  true
+);
+eq(
+  'a page with results is never a challenge',
+  isChallengeHtml('<div class="card-box-inner">…</div><script>onProtectionInitialized</script>'),
+  false
+);
+eq(
+  'an ordinary page is not a challenge',
+  isChallengeHtml('<div class="property-price">1,280万円</div>'),
+  false
+);
+
+// ── Retry policy ────────────────────────────────────────────────────────────
+eq('throttling is retried patiently', policyForStatus(429)?.attempts, 5);
+eq('a gateway error is retried', policyForStatus(502)?.attempts, 3);
+eq('a forbidden response waits longest', policyForStatus(403)?.baseMs, 10_000);
+eq('an ordinary client error is final', policyForStatus(400), null);
+
+const policy = { baseMs: 1000, maxMs: 8000, attempts: 5 };
+eq(
+  'the first wait is the base wait',
+  backoffDelay(0, policy, () => 0.5),
+  1000
+);
+eq(
+  'each attempt doubles the wait',
+  backoffDelay(2, policy, () => 0.5),
+  4000
+);
+eq(
+  'the wait is capped',
+  backoffDelay(9, policy, () => 0.5),
+  8000
+);
+eq(
+  'jitter reaches down a quarter',
+  backoffDelay(0, policy, () => 0),
+  750
+);
+eq(
+  'jitter reaches up a quarter',
+  backoffDelay(0, policy, () => 1),
+  1250
+);
+
+eq('Retry-After in seconds', retryAfterMs('30'), 30_000);
+eq(
+  'Retry-After as a date',
+  retryAfterMs('Wed, 21 Oct 2026 07:28:10 GMT', Date.parse('Wed, 21 Oct 2026 07:28:00 GMT')),
+  10_000
+);
+eq(
+  'a date already past waits no time',
+  retryAfterMs('Wed, 21 Oct 2026 07:28:00 GMT', Date.parse('Wed, 21 Oct 2026 07:29:00 GMT')),
+  0
+);
+eq('no header means no stated wait', retryAfterMs(null), null);
+eq('unparseable headers are ignored', retryAfterMs('soon'), null);
+
+// ── Pacing ──────────────────────────────────────────────────────────────────
+// A challenge slows the whole run down, not just the request that tripped it.
+const pacer = newPacer();
+eq('a fresh run has no penalty', pacer.cooldownMs, 0);
+pacer.penalise();
+eq('a challenge widens the gap', pacer.cooldownMs, 1500);
+pacer.penalise();
+eq('challenges accumulate', pacer.cooldownMs, 3000);
+for (let i = 0; i < 19; i++) pacer.reward();
+eq('a short clean streak is not enough to recover', pacer.cooldownMs, 3000);
+pacer.reward();
+eq('a long clean streak halves the penalty', pacer.cooldownMs, 1500);
+for (let i = 0; i < 20; i++) pacer.reward();
+eq('the penalty eventually clears entirely', pacer.cooldownMs, 0);
+
+eq(
+  'the penalty is added to the configured pace',
+  paceDelay(900, 1500, () => 0.5),
+  2400
+);
+eq(
+  'pacing jitters down three tenths',
+  paceDelay(1000, 0, () => 0),
+  700
+);
+eq(
+  'pacing jitters up three tenths',
+  paceDelay(1000, 0, () => 1),
+  1300
 );
 
 // ── Inspection ceiling ──────────────────────────────────────────────────────
