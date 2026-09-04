@@ -27,14 +27,29 @@ function parseLeadingNumber(raw: string): number | null {
   return m ? Number.parseFloat(m[1]) : null;
 }
 
+export interface EvaluateOptions {
+  /**
+   * Judge only the filters whose field is actually present. A results card
+   * carries a handful of fields, and a filter looking at one of the others
+   * must not read that absence as a failure — the detail page has yet to be
+   * opened, so nothing is known either way.
+   */
+  presentFieldsOnly?: boolean;
+}
+
 /** Returns one reason per failed filter; an empty array means the property passes. */
-export function evaluate(filters: FilterSettings, fields: Record<string, string>): string[] {
+export function evaluate(
+  filters: FilterSettings,
+  fields: Record<string, string>,
+  options: EvaluateOptions = {}
+): string[] {
   const reasons: string[] = [];
 
   for (const def of FILTER_DEFS) {
     const state = filters[def.id];
     if (!state?.enabled) continue;
     const raw = findField(fields, def.detailKey);
+    if (options.presentFieldsOnly && raw === '') continue;
 
     switch (def.type) {
       case 'exclude_text': {

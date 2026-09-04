@@ -3,7 +3,8 @@
  * The defaults asserted here are the ones inherited from the prototype:
  * 市街化調整区域 / 畑 / 接道3m以下 を除外、取得件数 30。
  */
-import { buildPageUrl, expectedPages, parseTotalCount } from '../src/lib/crawler';
+import { buildPageUrl, expectedPages } from '../src/lib/crawler';
+import { detailIdFromUrl, parseTotalCount, splitFieldPair } from '../src/lib/markup';
 import { describeActiveFilters, evaluate, findField } from '../src/lib/evaluate';
 import { getDefaultSettings, LIST_PAGE_SIZE } from '../src/lib/config';
 import { inspectLimitFor, resolveStopReason } from '../src/lib/run';
@@ -80,7 +81,8 @@ eq('an unknown count gives no page bound', expectedPages(null, 50), null);
 const report = (stoppedBy: ListCrawlReport['stoppedBy']): ListCrawlReport => ({
   pagesCrawled: 3,
   totalCount: 7975,
-  stoppedBy
+  stoppedBy,
+  usedLinkFallback: false
 });
 
 eq(
@@ -107,6 +109,62 @@ eq(
   'a still-running list defaults to exhausted',
   resolveStopReason(report(null), 5, 30, 40, 300),
   'exhausted'
+);
+
+// ── Results cards ───────────────────────────────────────────────────────────
+// What a card gives up is what a detail page never has to be opened for.
+eq(
+  'a property id is read out of its URL',
+  detailIdFromUrl('https://www.athome.co.jp/tochi/3918978901/?DOWN=1'),
+  '3918978901'
+);
+eq(
+  'an area segment does not hide the id',
+  detailIdFromUrl('https://www.athome.co.jp/tochi/tokyo/3918978901/'),
+  '3918978901'
+);
+eq(
+  'a list URL holds no property id',
+  detailIdFromUrl('https://www.athome.co.jp/tochi/tokyo/list/'),
+  null
+);
+
+eq('a paired label splits into its two fields', splitFieldPair('建ぺい率/容積率', '40%/80%'), [
+  ['建ぺい率', '40%'],
+  ['容積率', '80%']
+]);
+eq('an ordinary label is left alone', splitFieldPair('土地面積', '131.30m²～208.08m²'), [
+  ['土地面積', '131.30m²～208.08m²']
+]);
+// Without the count check, 「所在地」with a slash in it would be torn in half.
+eq(
+  'a label that does not split evenly is left alone',
+  splitFieldPair('所在地', '東京都/八王子市/長房町'),
+  [['所在地', '東京都/八王子市/長房町']]
+);
+
+// ── Pre-filtering on the card ───────────────────────────────────────────────
+// A card carries a handful of fields. A filter on any of the others knows
+// nothing yet, and must not read that silence as a failure.
+const cardFields = { 土地面積: '95.00m²', 所在地: '東京都八王子市', 建ぺい率: '40%' };
+const strict = getDefaultSettings().filters;
+
+eq(
+  'a filter whose field the card lacks is held back',
+  evaluate(strict, cardFields, { presentFieldsOnly: true }),
+  []
+);
+eq(
+  'the same filter fails once the detail page is missing the field',
+  evaluate({ ...strict, suido: { enabled: true, required: 'あり' } }, cardFields).length > 0,
+  true
+);
+eq(
+  'a filter the card can answer still rules the property out',
+  evaluate({ ...strict, menseki: { enabled: true, min: 100, max: null } }, cardFields, {
+    presentFieldsOnly: true
+  }),
+  ['土地面積: 95m² < 100']
 );
 
 // ── Bot check ───────────────────────────────────────────────────────────────

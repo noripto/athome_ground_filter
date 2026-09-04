@@ -1,13 +1,8 @@
 import { MAX_DETAIL_FETCHES } from './config';
-import {
-  fetchDetail,
-  newListCrawlReport,
-  streamDetailLinks,
-  type ListCrawlReport
-} from './crawler';
+import { fetchDetail, newListCrawlReport, streamListings, type ListCrawlReport } from './crawler';
 import { describeActiveFilters, evaluate } from './evaluate';
 import { AbortedError, BlockedError, newPacer, paceDelay, sleep } from './fetcher';
-import type { PropertyResult, ResultSet, Settings, StopReason } from './types';
+import type { Listing, PropertyResult, ResultSet, Settings, StopReason } from './types';
 
 export interface RunProgress {
   phase: 'list' | 'detail' | 'done';
@@ -51,17 +46,36 @@ export function resolveStopReason(
   return report.stoppedBy ?? 'exhausted';
 }
 
-function failedResult(url: string): PropertyResult {
+/**
+ * Whatever the card said is worth keeping even when the detail page could not
+ * be read, so a failed property still shows up as something recognisable.
+ */
+function failedResult(listing: Listing): PropertyResult {
   return {
-    url,
+    url: listing.url,
     passed: false,
     reasons: ['詳細ページの取得に失敗しました'],
-    name: '',
-    price: '',
-    area: '',
-    location: '',
-    traffic: '',
-    fields: {}
+    name: listing.name,
+    price: listing.price,
+    area: listing.area,
+    location: listing.location,
+    traffic: listing.traffic,
+    fields: listing.fields
+  };
+}
+
+/** A property ruled out by its card alone, with no detail page ever opened. */
+function prefilteredResult(listing: Listing, reasons: string[]): PropertyResult {
+  return {
+    url: listing.url,
+    passed: false,
+    reasons,
+    name: listing.name,
+    price: listing.price,
+    area: listing.area,
+    location: listing.location,
+    traffic: listing.traffic,
+    fields: listing.fields
   };
 }
 
@@ -85,18 +99,19 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
   let passed = 0;
   let excluded = 0;
   let failed = 0;
+  let skipped = 0;
 
-  const links = streamDetailLinks({
+  const listings = streamListings({
     baseUrl: searchUrl,
     delayMs: settings.requestDelayMs,
     signal,
     pacer,
     report,
-    onPage: (progress, linksSeen) => {
+    onPage: (progress, seen) => {
       const of = progress.totalCount === null ? '' : ` / 全 ${progress.totalCount}件`;
       onProgress?.({
         phase: 'list',
-        message: `リスト ${progress.pagesCrawled} ページ目（候補 ${linksSeen}件${of}）`,
+        message: `リスト ${progress.pagesCrawled} ページ目（候補 ${seen}件${of}）`,
         current: passed,
         total: target
       });
@@ -104,10 +119,21 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
   });
 
   try {
-    for await (const url of links) {
+    for await (const listing of listings) {
       if (signal?.aborted) throw new AbortedError();
       if (target > 0 && passed >= target) break;
       if (inspected >= inspectLimit) break;
+
+      // The card already answers some of the filters. Ruling a property out
+      // here costs nothing; the detail page it saves is a whole request.
+      const cardReasons = evaluate(settings.filters, listing.fields, { presentFieldsOnly: true });
+      if (cardReasons.length > 0) {
+        excluded++;
+        skipped++;
+        properties.push(prefilteredResult(listing, cardReasons));
+        continue;
+      }
+
       if (inspected > 0) await sleep(paceDelay(settings.requestDelayMs, pacer.cooldownMs));
 
       inspected++;
@@ -121,17 +147,17 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
         total: target
       });
 
-      const detail = await fetchDetail(url, signal, pacer);
+      const detail = await fetchDetail(listing.url, signal, pacer);
       if (!detail) {
         failed++;
-        properties.push(failedResult(url));
+        properties.push(failedResult(listing));
         continue;
       }
 
       const reasons = evaluate(settings.filters, detail.fields);
       if (reasons.length === 0) passed++;
       else excluded++;
-      properties.push({ url, passed: reasons.length === 0, reasons, ...detail });
+      properties.push({ url: listing.url, passed: reasons.length === 0, reasons, ...detail });
     }
   } catch (err) {
     // Being blocked ends the run, but everything read up to that point is
@@ -158,6 +184,7 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
     passed,
     excluded,
     failed,
+    skipped,
     pagesCrawled: report.pagesCrawled,
     stoppedBy,
     inspectLimit,

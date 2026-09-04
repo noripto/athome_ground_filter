@@ -74,6 +74,24 @@ export interface Settings {
   filters: FilterSettings;
 }
 
+/**
+ * What a search-results card says about a property, before its detail page is
+ * opened. One request yields fifty of these, which is what makes it worth
+ * ruling properties out here rather than one detail page at a time.
+ */
+export interface Listing {
+  /** athome's property id, taken from the detail URL. */
+  id: string;
+  url: string;
+  name: string;
+  price: string;
+  area: string;
+  location: string;
+  traffic: string;
+  /** The card's own label/value pairs, in the shape detail pages use. */
+  fields: Record<string, string>;
+}
+
 export interface PropertyResult {
   url: string;
   passed: boolean;
@@ -123,6 +141,8 @@ export interface ResultSet {
   passed: number;
   excluded: number;
   failed: number;
+  /** Excluded by their card alone, so no detail page was ever opened. */
+  skipped: number;
   pagesCrawled: number;
   stoppedBy: StopReason;
   /** The cap on inspected properties that applied to this run. */

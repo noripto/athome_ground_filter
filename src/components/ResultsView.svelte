@@ -71,6 +71,10 @@
           <span class="stat">取得失敗 {results.failed}件</span>
         {/if}
         <span class="stat">確認 {results.inspected}件 / {results.pagesCrawled}ページ</span>
+        <!-- Worth showing: it is the work the two-stage crawl saved. -->
+        {#if results.skipped}
+          <span class="stat">一覧で除外 {results.skipped}件（詳細取得なし）</span>
+        {/if}
         <!-- Loose check: results stored before this field existed have none. -->
         {#if results.totalCount != null}
           <span class="stat">検索該当 {results.totalCount.toLocaleString('ja-JP')}件</span>
