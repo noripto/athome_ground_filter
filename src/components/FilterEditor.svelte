@@ -29,10 +29,16 @@
   let notice = $state('');
   let noticeTimer: ReturnType<typeof setTimeout> | undefined;
 
-  // IndexedDB is unavailable to the content script's sandboxed page in some
-  // Chrome builds, and a settings screen that cannot count the cache should
-  // still open.
+  /**
+   * IndexedDB belongs to the page's origin, and this editor also opens inside
+   * athome.co.jp as part of the content script — where it would be reading
+   * athome's storage, not the extension's. The cache only exists where the
+   * crawl runs, so it is only shown there.
+   */
+  const ownsCache = window.location.protocol === 'chrome-extension:';
+
   function refreshCacheCount() {
+    if (!ownsCache) return;
     countDetails().then(
       count => (cachedCount = count),
       () => (cachedCount = null)
@@ -159,13 +165,15 @@
         </div>
       </div>
 
-      <div class="crawl">
-        <span class="crawl-label">保存済みの詳細</span>
-        <span class="agf-unit">{cachedCount === null ? '確認中…' : `${cachedCount}件`}</span>
-        <button type="button" class="agf-btn agf-btn-ghost" onclick={dropCache}>
-          キャッシュを削除
-        </button>
-      </div>
+      {#if ownsCache}
+        <div class="crawl">
+          <span class="crawl-label">保存済みの詳細</span>
+          <span class="agf-unit">{cachedCount === null ? '確認中…' : `${cachedCount}件`}</span>
+          <button type="button" class="agf-btn agf-btn-ghost" onclick={dropCache}>
+            キャッシュを削除
+          </button>
+        </div>
+      {/if}
 
       <div class="crawl">
         <label class="crawl-check">
