@@ -238,6 +238,9 @@ export const DEFAULT_REQUEST_DELAY_MS = 900;
 /** Below this the site reliably starts challenging requests. */
 export const MIN_REQUEST_DELAY_MS = 500;
 
+/** How long a cached detail page is trusted before it is read again. */
+export const DEFAULT_DETAIL_MAX_AGE_DAYS = 7;
+
 export function getFilterDef(id: string): FilterDef | undefined {
   return FILTER_DEFS.find(d => d.id === id);
 }
@@ -267,6 +270,7 @@ export function getDefaultSettings(): Settings {
   return {
     targetCount: DEFAULT_TARGET_COUNT,
     requestDelayMs: DEFAULT_REQUEST_DELAY_MS,
+    detailMaxAgeDays: DEFAULT_DETAIL_MAX_AGE_DAYS,
     keepExcluded: true,
     filters: getDefaultFilters()
   };

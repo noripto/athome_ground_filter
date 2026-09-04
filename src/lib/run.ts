@@ -1,8 +1,15 @@
 import { MAX_DETAIL_FETCHES } from './config';
-import { fetchDetail, newListCrawlReport, streamListings, type ListCrawlReport } from './crawler';
+import {
+  canonicalSearchKey,
+  fetchDetail,
+  newListCrawlReport,
+  streamListings,
+  type ListCrawlReport
+} from './crawler';
+import { getDetail, isFresh, putDetail, putListing, putSearch } from './db';
 import { describeActiveFilters, evaluate } from './evaluate';
 import { AbortedError, BlockedError, newPacer, paceDelay, sleep } from './fetcher';
-import type { Listing, PropertyResult, ResultSet, Settings, StopReason } from './types';
+import type { Detail, Listing, PropertyResult, ResultSet, Settings, StopReason } from './types';
 
 export interface RunProgress {
   phase: 'list' | 'detail' | 'done';
@@ -96,11 +103,16 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
   // to slow the detail fetches down too, or the crawl walks straight back into
   // the same wall.
   const pacer = newPacer();
+  const startedAt = Date.now();
+  const searchKey = canonicalSearchKey(searchUrl);
+  const maxAgeMs = settings.detailMaxAgeDays * 24 * 60 * 60 * 1000;
+  const seenIds: string[] = [];
   let inspected = 0;
   let passed = 0;
   let excluded = 0;
   let failed = 0;
   let skipped = 0;
+  let cached = 0;
 
   const listings = streamListings({
     baseUrl: searchUrl,
@@ -125,6 +137,9 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
       if (target > 0 && passed >= target) break;
       if (inspected >= inspectLimit) break;
 
+      seenIds.push(listing.id);
+      void putListing({ ...listing, seenAt: startedAt });
+
       // The card already answers some of the filters. Ruling a property out
       // here costs nothing; the detail page it saves is a whole request.
       const cardReasons = evaluate(settings.filters, listing.fields, { presentFieldsOnly: true });
@@ -135,30 +150,53 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
         continue;
       }
 
-      if (inspected > 0) await sleep(paceDelay(settings.requestDelayMs, pacer.cooldownMs));
+      // A detail page already read is the whole point of keeping them: what it
+      // says does not change, so a second run over the same search only pays
+      // for the properties that are new.
+      const stored = await getDetail(listing.id);
+      let detail: Detail | null = isFresh(stored, startedAt, maxAgeMs) ? (stored ?? null) : null;
 
-      inspected++;
-      onProgress?.({
-        phase: 'detail',
-        message:
-          target > 0
-            ? `合致 ${passed} / ${target}件（${inspected}件目を確認中）`
-            : `合致 ${passed}件（${inspected}件目を確認中）`,
-        current: passed,
-        total: target
-      });
+      if (detail) {
+        cached++;
+      } else {
+        if (inspected > 0) await sleep(paceDelay(settings.requestDelayMs, pacer.cooldownMs));
 
-      const detail = await fetchDetail(listing.url, signal, pacer);
-      if (!detail) {
-        failed++;
-        properties.push(failedResult(listing));
-        continue;
+        inspected++;
+        onProgress?.({
+          phase: 'detail',
+          message:
+            target > 0
+              ? `合致 ${passed} / ${target}件（${inspected}件目を取得中、キャッシュ ${cached}件）`
+              : `合致 ${passed}件（${inspected}件目を取得中、キャッシュ ${cached}件）`,
+          current: passed,
+          total: target
+        });
+
+        const fetched = await fetchDetail(listing.url, signal, pacer);
+        if (!fetched) {
+          failed++;
+          properties.push(failedResult(listing));
+          continue;
+        }
+
+        detail = { id: listing.id, fetchedAt: Date.now(), ...fetched };
+        void putDetail(detail);
       }
 
       const reasons = evaluate(settings.filters, detail.fields);
       if (reasons.length === 0) passed++;
       else excluded++;
-      properties.push({ url: listing.url, passed: reasons.length === 0, reasons, ...detail });
+      properties.push({
+        url: listing.url,
+        passed: reasons.length === 0,
+        reasons,
+        name: detail.name,
+        price: detail.price,
+        area: detail.area,
+        location: detail.location,
+        traffic: detail.traffic,
+        fields: detail.fields
+      });
     }
   } catch (err) {
     // Both of these end the run rather than fail it. A crawl of a whole search
@@ -172,9 +210,21 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
 
   const stoppedBy = resolveStopReason(report, passed, target, inspected, inspectLimit);
 
+  await putSearch({
+    searchKey,
+    searchUrl,
+    totalCount: report.totalCount,
+    pagesCrawled: report.pagesCrawled,
+    listingIds: seenIds,
+    startedAt,
+    updatedAt: Date.now(),
+    finishedAt: Date.now(),
+    stoppedBy
+  });
+
   onProgress?.({
     phase: 'done',
-    message: `完了 — 合致 ${passed}件（${inspected}件を確認）`,
+    message: `完了 — 合致 ${passed}件（取得 ${inspected}件、キャッシュ ${cached}件）`,
     current: passed,
     total: target
   });
@@ -189,6 +239,7 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
     excluded,
     failed,
     skipped,
+    cached,
     pagesCrawled: report.pagesCrawled,
     stoppedBy,
     inspectLimit,

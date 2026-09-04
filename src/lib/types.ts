@@ -69,6 +69,12 @@ export interface Settings {
   targetCount: number;
   /** Delay between detail-page fetches, in ms. Keeps the crawl polite. */
   requestDelayMs: number;
+  /**
+   * How long a cached detail page is trusted. Detail fields barely change, so
+   * this can be generous; the price and whether a listing is still up come
+   * from the list pages, which are re-read every run regardless.
+   */
+  detailMaxAgeDays: number;
   /** Also list properties that were excluded, with their reasons. */
   keepExcluded: boolean;
   filters: FilterSettings;
@@ -90,6 +96,38 @@ export interface Listing {
   traffic: string;
   /** The card's own label/value pairs, in the shape detail pages use. */
   fields: Record<string, string>;
+}
+
+/**
+ * A detail page as it was read, kept so the next run does not have to read it
+ * again. This is the expensive half of a crawl and the half that does not
+ * change: 都市計画 and 地目 are the same next week.
+ */
+export interface Detail {
+  id: string;
+  fields: Record<string, string>;
+  name: string;
+  price: string;
+  area: string;
+  location: string;
+  traffic: string;
+  /** When this was read, which is what decides whether it is still trusted. */
+  fetchedAt: number;
+}
+
+/** What one search has produced, so an interrupted run can pick up again. */
+export interface SearchRecord {
+  /** The search URL with paging and tracking stripped, so pages share it. */
+  searchKey: string;
+  searchUrl: string;
+  totalCount: number | null;
+  pagesCrawled: number;
+  /** Every property this search has turned up, in the order it did. */
+  listingIds: string[];
+  startedAt: number;
+  updatedAt: number;
+  finishedAt: number | null;
+  stoppedBy: StopReason | null;
 }
 
 export interface PropertyResult {
@@ -143,6 +181,8 @@ export interface ResultSet {
   failed: number;
   /** Excluded by their card alone, so no detail page was ever opened. */
   skipped: number;
+  /** Read from the cache instead of the site — the work a re-run saved. */
+  cached: number;
   pagesCrawled: number;
   stoppedBy: StopReason;
   /** The cap on inspected properties that applied to this run. */

@@ -71,9 +71,12 @@
           <span class="stat">取得失敗 {results.failed}件</span>
         {/if}
         <span class="stat">確認 {results.inspected}件 / {results.pagesCrawled}ページ</span>
-        <!-- Worth showing: it is the work the two-stage crawl saved. -->
+        <!-- Both are work the run did not have to do, which is the point. -->
         {#if results.skipped}
           <span class="stat">一覧で除外 {results.skipped}件（詳細取得なし）</span>
+        {/if}
+        {#if results.cached}
+          <span class="stat">キャッシュ {results.cached}件</span>
         {/if}
         <!-- Loose check: results stored before this field existed have none. -->
         {#if results.totalCount != null}

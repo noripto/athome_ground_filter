@@ -35,6 +35,29 @@ export function buildPageUrl(baseUrl: string, page: number, pageSize = LIST_PAGE
   return url.toString();
 }
 
+/**
+ * Parameters athome adds for its own bookkeeping rather than to describe the
+ * search, which would otherwise make the same search look like a new one.
+ */
+const INCIDENTAL_PARAMS = ['limit', 'page', 'sref', 'DOWN', 'BKLISTID', 'SEARCHDIV'];
+
+/**
+ * The identity of a search, independent of where in it you happen to be. Page
+ * five of a search has to key the same as page one, or a resumed run would
+ * remember nothing.
+ */
+export function canonicalSearchKey(searchUrl: string): string {
+  const url = new URL(searchUrl);
+  url.pathname = url.pathname.replace(/\/list\/(?:page)?\d+\/?$/, '/list/');
+  url.hash = '';
+
+  for (const name of INCIDENTAL_PARAMS) url.searchParams.delete(name);
+  const params = [...url.searchParams.entries()].sort(([a], [b]) => a.localeCompare(b));
+  url.search = new URLSearchParams(params).toString();
+
+  return url.toString();
+}
+
 /** How many list pages `total` hits fill. Null when the count is unknown. */
 export function expectedPages(total: number | null, pageSize: number): number | null {
   if (total === null || pageSize <= 0) return null;

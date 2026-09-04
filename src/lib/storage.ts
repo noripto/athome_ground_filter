@@ -27,6 +27,7 @@ function normalize(stored: Partial<Settings> | undefined): Settings {
   return {
     targetCount,
     requestDelayMs: stored.requestDelayMs ?? defaults.requestDelayMs,
+    detailMaxAgeDays: stored.detailMaxAgeDays ?? defaults.detailMaxAgeDays,
     keepExcluded: stored.keepExcluded ?? defaults.keepExcluded,
     filters
   };

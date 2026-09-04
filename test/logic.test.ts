@@ -3,7 +3,8 @@
  * The defaults asserted here are the ones inherited from the prototype:
  * 市街化調整区域 / 畑 / 接道3m以下 を除外、取得件数 30。
  */
-import { buildPageUrl, expectedPages } from '../src/lib/crawler';
+import { buildPageUrl, canonicalSearchKey, expectedPages } from '../src/lib/crawler';
+import { isFresh } from '../src/lib/db';
 import { detailIdFromUrl, parseTotalCount, splitFieldPair } from '../src/lib/markup';
 import { describeActiveFilters, evaluate, findField } from '../src/lib/evaluate';
 import { getDefaultSettings, LIST_PAGE_SIZE } from '../src/lib/config';
@@ -110,6 +111,55 @@ eq(
   resolveStopReason(report(null), 5, 30, 40, 300),
   'exhausted'
 );
+
+// ── Search identity ─────────────────────────────────────────────────────────
+// Page five of a search has to key the same as page one, or a second run would
+// remember nothing and pay full price all over again.
+eq(
+  'the page segment does not change a search’s identity',
+  canonicalSearchKey('https://www.athome.co.jp/tochi/tokyo/list/page5/?PREFECTURE=13&limit=50'),
+  'https://www.athome.co.jp/tochi/tokyo/list/?PREFECTURE=13'
+);
+eq(
+  'athome’s own tracking parameters are dropped',
+  canonicalSearchKey(
+    'https://www.athome.co.jp/tochi/tokyo/list/?sref=list_simple&DOWN=1&BKLISTID=001LPC&PREFECTURE=13'
+  ),
+  'https://www.athome.co.jp/tochi/tokyo/list/?PREFECTURE=13'
+);
+eq(
+  'the order the conditions were written in does not matter',
+  canonicalSearchKey('https://www.athome.co.jp/tochi/tokyo/list/?b=2&a=1'),
+  canonicalSearchKey('https://www.athome.co.jp/tochi/tokyo/list/?a=1&b=2')
+);
+eq(
+  'different conditions are different searches',
+  canonicalSearchKey('https://www.athome.co.jp/tochi/tokyo/list/?PREFECTURE=13') ===
+    canonicalSearchKey('https://www.athome.co.jp/tochi/tokyo/list/?PREFECTURE=14'),
+  false
+);
+
+// ── Cache freshness ─────────────────────────────────────────────────────────
+const day = 24 * 60 * 60 * 1000;
+const detail = (fetchedAt: number) => ({
+  id: '1',
+  fields: {},
+  name: '',
+  price: '',
+  area: '',
+  location: '',
+  traffic: '',
+  fetchedAt
+});
+
+eq('a detail read today is reused', isFresh(detail(1000 * day), 1000 * day + day, 7 * day), true);
+eq(
+  'a detail past its age is read again',
+  isFresh(detail(1000 * day), 1000 * day + 8 * day, 7 * day),
+  false
+);
+eq('a detail never read is not fresh', isFresh(undefined, 1000 * day, 7 * day), false);
+eq('a zero age reads everything again', isFresh(detail(1000 * day), 1000 * day + 1, 0), false);
 
 // ── Results cards ───────────────────────────────────────────────────────────
 // What a card gives up is what a detail page never has to be opened for.

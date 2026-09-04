@@ -8,6 +8,7 @@
     countLabel,
     getFilterDef
   } from '../lib/config';
+  import { clearCache, countDetails } from '../lib/db';
   import { describeActiveFilters } from '../lib/evaluate';
   import { inspectLimitFor } from '../lib/run';
   import { loadSettings, resetSettings, saveSettings } from '../lib/storage';
@@ -22,8 +23,29 @@
   let { title = '⚙ 土地フィルター 設定', onclose }: Props = $props();
 
   let settings = $state<Settings | null>(null);
+  let cachedCount = $state<number | null>(null);
   let notice = $state('');
   let noticeTimer: ReturnType<typeof setTimeout> | undefined;
+
+  // IndexedDB is unavailable to the content script's sandboxed page in some
+  // Chrome builds, and a settings screen that cannot count the cache should
+  // still open.
+  function refreshCacheCount() {
+    countDetails().then(
+      count => (cachedCount = count),
+      () => (cachedCount = null)
+    );
+  }
+
+  refreshCacheCount();
+
+  async function dropCache() {
+    if (!confirm('保存済みの詳細ページをすべて削除しますか？\n次回の取得は全件を読み直します。'))
+      return;
+    await clearCache();
+    refreshCacheCount();
+    flash('✓ キャッシュを削除しました');
+  }
 
   const activeSummary = $derived(settings ? describeActiveFilters(settings.filters) : []);
   const inspectLimit = $derived(inspectLimitFor(settings?.targetCount ?? 0));
@@ -112,6 +134,33 @@
         <span class="agf-unit">
           ms — 短くすると athome のアクセス制限に掛かりやすくなります（{MIN_REQUEST_DELAY_MS} 以上）
         </span>
+      </div>
+
+      <div class="crawl">
+        <label class="crawl-label" for="agf-cache-age">詳細キャッシュの有効期間</label>
+        <input
+          id="agf-cache-age"
+          class="agf-num"
+          type="number"
+          min="0"
+          max="365"
+          step="1"
+          bind:value={settings.detailMaxAgeDays}
+        />
+        <span class="agf-unit">日</span>
+        <div class="crawl-help">
+          一度読んだ詳細ページはこの期間だけ再利用し、2回目以降の取得では新着物件だけを読みます。
+          価格や掲載終了は一覧ページから毎回読み直すので、この値を長くしても最新のままです。 0
+          にすると毎回すべて取得し直します。
+        </div>
+      </div>
+
+      <div class="crawl">
+        <span class="crawl-label">保存済みの詳細</span>
+        <span class="agf-unit">{cachedCount === null ? '確認中…' : `${cachedCount}件`}</span>
+        <button type="button" class="agf-btn agf-btn-ghost" onclick={dropCache}>
+          キャッシュを削除
+        </button>
       </div>
 
       <div class="crawl">
