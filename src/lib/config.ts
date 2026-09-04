@@ -189,6 +189,18 @@ export const FILTER_DEFS: FilterDef[] = [
     defaultEnabled: false,
     defaultMin: null,
     defaultMax: null
+  },
+  {
+    id: 'ekitoho',
+    label: '駅徒歩',
+    detailKey: '交通',
+    type: 'numeric_range',
+    unit: '分',
+    parseAs: 'walk',
+    defaultEnabled: false,
+    defaultMin: null,
+    defaultMax: null,
+    help: '最寄り駅までの徒歩分数で絞り込みます。複数路線があるときは最も近い駅で判定します（バス便は徒歩に数えません）'
   }
 ];
 
@@ -201,7 +213,7 @@ export const SECTIONS: { title: string; ids: string[] }[] = [
   { title: '接道', ids: ['setsudo'] },
   { title: '権利・取引', ids: ['tochiken', 'torihiki'] },
   { title: 'インフラ', ids: ['suido', 'gesui', 'gas', 'denki'] },
-  { title: '数値範囲', ids: ['kenpeito', 'yosekiritsu', 'menseki', 'kakaku'] }
+  { title: '数値範囲', ids: ['kenpeito', 'yosekiritsu', 'menseki', 'kakaku', 'ekitoho'] }
 ];
 
 /** The only values the count buttons offer, and so the only valid counts. */

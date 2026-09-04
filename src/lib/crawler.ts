@@ -18,6 +18,7 @@ import {
   parseTotalCount,
   readDetailName
 } from './markup';
+import { listingsFromState } from './state';
 import type { Listing, PropertyResult, StopReason } from './types';
 
 /**
@@ -64,6 +65,13 @@ export function expectedPages(total: number | null, pageSize: number): number | 
   return Math.ceil(total / pageSize);
 }
 
+/**
+ * Where a list page's properties came from. Each step down loses fields, and
+ * with them the chance to rule a property out before opening its detail page,
+ * so which one a run ended up on is worth reporting rather than hiding.
+ */
+export type ListingSource = 'state' | 'cards' | 'links';
+
 /** What a list crawl learned on the way, and how it ended. */
 export interface ListCrawlReport {
   pagesCrawled: number;
@@ -71,26 +79,48 @@ export interface ListCrawlReport {
   totalCount: number | null;
   /** Why the list crawl stopped, or null while it is still running. */
   stoppedBy: StopReason | null;
-  /** True once a page had to be read as bare links because no card matched. */
-  usedLinkFallback: boolean;
+  /** The poorest source any page had to fall back to. */
+  source: ListingSource | null;
 }
 
 export function newListCrawlReport(): ListCrawlReport {
-  return { pagesCrawled: 0, totalCount: null, stoppedBy: null, usedLinkFallback: false };
+  return { pagesCrawled: 0, totalCount: null, stoppedBy: null, source: null };
+}
+
+const SOURCE_RANK: Record<ListingSource, number> = { state: 0, cards: 1, links: 2 };
+
+function noteSource(report: ListCrawlReport, source: ListingSource): void {
+  if (report.source === null || SOURCE_RANK[source] > SOURCE_RANK[report.source]) {
+    report.source = source;
+  }
 }
 
 /**
- * Reads a list page as properties, falling back to bare links when the card
- * markup no longer matches. The fallback loses everything but the URL, so it
- * is recorded: a run that quietly stops pre-filtering is a run that opens far
- * more detail pages than it needs to.
+ * Reads a list page as properties, richest source first. athome's own transfer
+ * state carries the most; the rendered cards carry less; a sweep for detail
+ * links carries nothing but the URLs, and exists only so a redesign degrades
+ * the crawl instead of stopping it.
  */
-function readListPage(doc: Document, url: string, report: ListCrawlReport): Listing[] {
+function readListPage(
+  html: string,
+  doc: Document,
+  url: string,
+  report: ListCrawlReport
+): Listing[] {
+  const fromState = listingsFromState(html);
+  if (fromState.length > 0) {
+    noteSource(report, 'state');
+    return fromState;
+  }
+
   const cards = parseListingCards(doc, url);
-  if (cards.length > 0) return cards;
+  if (cards.length > 0) {
+    noteSource(report, 'cards');
+    return cards;
+  }
 
   const links = extractDetailLinks(doc, url);
-  if (links.length > 0) report.usedLinkFallback = true;
+  if (links.length > 0) noteSource(report, 'links');
   return links.map(bareListing);
 }
 
@@ -131,7 +161,7 @@ export async function* streamListings(options: LinkStreamOptions): AsyncGenerato
 
   while (page <= MAX_LIST_PAGES) {
     throwIfAborted(signal);
-    await sleep(paceDelay(delayMs, pacer?.cooldownMs));
+    await sleep(paceDelay(delayMs, pacer?.cooldownMs), signal);
 
     const url = buildPageUrl(baseUrl, page, pageSize);
     const outcome = await fetchPage(url, { signal, pacer });
@@ -153,7 +183,7 @@ export async function* streamListings(options: LinkStreamOptions): AsyncGenerato
 
     if (report.totalCount === null) report.totalCount = parseTotalCount(outcome.html);
 
-    const listings = readListPage(outcome.doc, url, report);
+    const listings = readListPage(outcome.html, outcome.doc, url, report);
     const ids = listings.map(listing => listing.id);
 
     // athome answers a page number it does not understand by serving page one,

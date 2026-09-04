@@ -12,13 +12,38 @@ const JITTER = 0.25;
 /** Noise added to the gap between requests, so the crawl has no exact rhythm. */
 const PACE_JITTER = 0.3;
 
-export const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
-
 export class AbortedError extends Error {
   constructor() {
     super('中断しました');
     this.name = 'AbortedError';
   }
+}
+
+/**
+ * Waits, but gives up the moment the run is cancelled. A plain timer holds a
+ * cancellation for as long as the wait it is in the middle of, and a backoff
+ * wait runs to a minute or two — long enough that the cancel button reads as
+ * broken.
+ */
+export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new AbortedError());
+      return;
+    }
+
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new AbortedError());
+    };
+
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 /** Thrown once athome keeps answering with its bot check despite backing off. */
@@ -179,7 +204,7 @@ export interface FetchOptions {
   /** Shared across a run so one challenge slows every later request down. */
   pacer?: Pacer;
   /** Overridable so tests never actually wait. */
-  wait?: (ms: number) => Promise<void>;
+  wait?: (ms: number, signal?: AbortSignal) => Promise<void>;
   random?: () => number;
 }
 
@@ -206,7 +231,9 @@ export async function fetchPage(url: string, options: FetchOptions = {}): Promis
       return challenged ? { kind: 'challenged' } : { kind: 'error', status: result.status };
     }
 
+    // The signal matters most here: a challenge backs off for up to two
+    // minutes, and a cancellation that waits that out is not a cancellation.
     const stated = challenged ? null : result.retryAfter;
-    await wait(Math.min(stated ?? backoffDelay(attempt, policy, random), policy.maxMs));
+    await wait(Math.min(stated ?? backoffDelay(attempt, policy, random), policy.maxMs), signal);
   }
 }

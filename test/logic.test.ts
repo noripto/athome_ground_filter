@@ -13,6 +13,7 @@ import {
 } from '../src/lib/numbers';
 import { applyViewFilter, emptyViewFilter, refilter, sortProperties } from '../src/lib/view';
 import { detailIdFromUrl, parseTotalCount, splitFieldPair } from '../src/lib/markup';
+import { listingsFromState } from '../src/lib/state';
 import { describeActiveFilters, evaluate, findField } from '../src/lib/evaluate';
 import { getDefaultSettings, LIST_PAGE_SIZE } from '../src/lib/config';
 import { inspectLimitFor, resolveStopReason } from '../src/lib/run';
@@ -22,7 +23,8 @@ import {
   newPacer,
   paceDelay,
   policyForStatus,
-  retryAfterMs
+  retryAfterMs,
+  sleep
 } from '../src/lib/fetcher';
 import type { ListCrawlReport } from '../src/lib/crawler';
 
@@ -90,7 +92,7 @@ const report = (stoppedBy: ListCrawlReport['stoppedBy']): ListCrawlReport => ({
   pagesCrawled: 3,
   totalCount: 7975,
   stoppedBy,
-  usedLinkFallback: false
+  source: null
 });
 
 eq(
@@ -168,6 +170,58 @@ eq(
 eq('a detail never read is not fresh', isFresh(undefined, 1000 * day, 7 * day), false);
 eq('a zero age reads everything again', isFresh(detail(1000 * day), 1000 * day + 1, 0), false);
 
+// ── athome's own data ───────────────────────────────────────────────────────
+// One real record, trimmed to the keys the parser reads. It carries 土地権利,
+// 建ぺい率 and 容積率, none of which the rendered card shows — so these filters
+// can be answered without opening a detail page at all.
+const stateFixture =
+  '<script id="serverApp-state" type="application/json">' +
+  '{"first-view-ITEMS":{"bukkenData":{"bukkenList":[{"bukkenNo":"3918978901",' +
+  '"title":"プラスパータウン長房","kakaku":{"priceText":[{"priceOku":"","priceMan":"1,650",' +
+  '"unitText":"円"},{"priceOku":"","priceMan":"2,920","unitText":"円"}],"bufferText":"～",' +
+  '"otherUnitText":"","noPlan":""},"landareaFromTo":"131.30m²～208.08m²",' +
+  '"location":"八王子市 長房町798","access":[{"accessText":"ＪＲ中央線 「西八王子」駅 徒歩25～29分",' +
+  '"accessEkiToho":"25分"},{"accessText":""}],"right":"所有権",' +
+  '"buildingCoverageRatio":"40%","floorAreaRatio":"80%","priroad":"-",' +
+  '"propertyDetailData":{"syumoku":"建築条件付き土地"},"urlLong":"/ahto/hcj"}]}}}' +
+  '</script>';
+
+const fromState = listingsFromState(stateFixture);
+
+eq('the transfer state yields its properties', fromState.length, 1);
+eq('the property id comes from bukkenNo', fromState[0]?.id, '3918978901');
+// urlLong is the agency's page, so the URL has to be built from the id.
+eq(
+  'the detail URL is built from the id, not urlLong',
+  fromState[0]?.url,
+  'https://www.athome.co.jp/tochi/3918978901/'
+);
+eq('the split price is put back together', fromState[0]?.price, '1,650万円～2,920万円');
+eq(
+  'fields the card never shows come through',
+  [
+    fromState[0]?.fields['土地権利'],
+    fromState[0]?.fields['建ぺい率'],
+    fromState[0]?.fields['容積率']
+  ],
+  ['所有権', '40%', '80%']
+);
+// A dash is how athome writes 「none」, and storing it would make a filter read
+// an absent value as a present one.
+eq('a dash is not kept as a value', '私道負担面積' in (fromState[0]?.fields ?? {}), false);
+eq('a page with no state yields nothing', listingsFromState('<html></html>').length, 0);
+
+// The escaped form Angular sometimes inlines has to parse the same way.
+eq(
+  'the escaped form parses too',
+  listingsFromState(
+    '<script id="serverApp-state" type="application/json">' +
+      '{&q;first-view-ITEMS&q;:{&q;bukkenData&q;:{&q;bukkenList&q;:[{&q;bukkenNo&q;:&q;123456789&q;}]}}}' +
+      '</script>'
+  )[0]?.id,
+  '123456789'
+);
+
 // ── Results cards ───────────────────────────────────────────────────────────
 // What a card gives up is what a detail page never has to be opened for.
 eq(
@@ -203,7 +257,13 @@ eq(
 // ── Pre-filtering on the card ───────────────────────────────────────────────
 // A card carries a handful of fields. A filter on any of the others knows
 // nothing yet, and must not read that silence as a failure.
-const cardFields = { 土地面積: '95.00m²', 所在地: '東京都八王子市', 建ぺい率: '40%' };
+const cardFields = {
+  土地面積: '95.00m²',
+  所在地: '東京都八王子市',
+  建ぺい率: '40%',
+  価格: '3,200万円',
+  交通: 'ＪＲ中央線 「西八王子」駅 徒歩25～29分'
+};
 const strict = getDefaultSettings().filters;
 
 eq(
@@ -222,6 +282,23 @@ eq(
     presentFieldsOnly: true
   }),
   ['土地面積: 95m² < 100']
+);
+// The card prints its price outside the label table, so it has to be put into
+// the field map by hand — without it every property over budget was still
+// getting its detail page opened.
+eq(
+  'the card answers the price filter, so no detail page is opened',
+  evaluate({ ...strict, kakaku: { enabled: true, min: null, max: 2000 } }, cardFields, {
+    presentFieldsOnly: true
+  }),
+  ['価格: 3200万円 > 2000']
+);
+eq(
+  'the card answers the walk filter too',
+  evaluate({ ...strict, ekitoho: { enabled: true, min: null, max: 15 } }, cardFields, {
+    presentFieldsOnly: true
+  }),
+  ['駅徒歩: 25分 > 15']
 );
 
 // ── Bot check ───────────────────────────────────────────────────────────────
@@ -291,6 +368,49 @@ eq(
 eq('no header means no stated wait', retryAfterMs(null), null);
 eq('unparseable headers are ignored', retryAfterMs('soon'), null);
 
+// ── Cancelling mid-wait ─────────────────────────────────────────────────────
+// A backoff waits up to two minutes. A cancellation that has to sit through
+// that is not a cancellation, so the wait itself has to give up.
+const cancelChecks: Promise<void>[] = [];
+
+cancelChecks.push(
+  (async () => {
+    const controller = new AbortController();
+    const started = Date.now();
+    const waiting = sleep(60_000, controller.signal);
+    controller.abort();
+    try {
+      await waiting;
+      eq('an aborted wait rejects', 'resolved', 'AbortedError');
+    } catch (err) {
+      eq('an aborted wait rejects', (err as Error).name, 'AbortedError');
+      eq('an aborted wait gives up at once', Date.now() - started < 1000, true);
+    }
+  })()
+);
+
+cancelChecks.push(
+  (async () => {
+    const controller = new AbortController();
+    controller.abort();
+    try {
+      await sleep(60_000, controller.signal);
+      eq('a wait that starts cancelled never waits', 'resolved', 'AbortedError');
+    } catch (err) {
+      eq('a wait that starts cancelled never waits', (err as Error).name, 'AbortedError');
+    }
+  })()
+);
+
+cancelChecks.push(
+  (async () => {
+    // An ordinary wait must still resolve, and must not leave the process
+    // holding an abort listener on a signal it no longer cares about.
+    await sleep(5, new AbortController().signal);
+    eq('an uncancelled wait resolves', true, true);
+  })()
+);
+
 // ── Pacing ──────────────────────────────────────────────────────────────────
 // A challenge slows the whole run down, not just the request that tripped it.
 const pacer = newPacer();
@@ -352,6 +472,17 @@ eq(
   8
 );
 eq('a bus leg is not a walk', parseWalkMinutes('バス15分 停歩3分 徒歩5分'), 5);
+// athome writes walks as ranges too, which the digits-before-分 reading missed.
+eq(
+  'a walk given as a range takes its lower bound',
+  parseWalkMinutes('ＪＲ中央線 「西八王子」駅 徒歩25～29分'),
+  25
+);
+eq(
+  'a bus-only listing has no walk at all',
+  parseWalkMinutes('ＪＲ中央線 「高尾」駅 バス18分 「長房センター」 停歩10～15分'),
+  null
+);
 eq('no walk stated is unknown', parseWalkMinutes('車6km'), null);
 
 eq(
@@ -516,6 +647,10 @@ eq(
   evaluate(settings.filters, { 価格: '900万円', 上水道: '無' }).filter(r => r.startsWith('上水道')),
   ['上水道: 無（「あり」が必要）']
 );
+
+// The cancellation checks are the only asynchronous ones, so they have to
+// settle before the tally is read.
+await Promise.all(cancelChecks);
 
 console.log(failures ? `${failures} 件失敗しました` : 'すべて成功しました');
 process.exit(failures ? 1 : 0);

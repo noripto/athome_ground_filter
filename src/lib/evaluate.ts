@@ -1,5 +1,5 @@
 import { FILTER_DEFS } from './config';
-import { parseAreaSqm, parsePriceMan } from './numbers';
+import { parseAreaSqm, parsePriceMan, parseWalkMinutes } from './numbers';
 import type {
   ExcludeTextState,
   NumericRangeDef,
@@ -37,6 +37,7 @@ function parseLeadingNumber(raw: string): number | null {
 function readRangeValue(raw: string, parseAs: NumericRangeDef['parseAs']): number | null {
   if (parseAs === 'price') return parsePriceMan(raw);
   if (parseAs === 'area') return parseAreaSqm(raw);
+  if (parseAs === 'walk') return parseWalkMinutes(raw);
   return parseLeadingNumber(raw);
 }
 

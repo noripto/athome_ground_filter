@@ -62,10 +62,14 @@ export function parseAreaSqm(raw: string): number | null {
 /**
  * The shortest walk to a station, in minutes. A property is usually listed
  * against several lines, and the nearest one is what people sort by. A bus
- * leg is not a walk, so 「バス15分 徒歩5分」 counts as 5.
+ * leg is not a walk, so 「バス15分 停歩10分」 counts as nothing. Walks are
+ * also given as ranges — 「徒歩25～29分」 — which is why the minutes are not
+ * simply the digits before 分.
  */
 export function parseWalkMinutes(raw: string): number | null {
-  const minutes = [...toHalfWidth(raw).matchAll(/徒歩\s*(\d+)\s*分/g)].map(m => Number(m[1]));
+  const minutes = [...toHalfWidth(raw).matchAll(/徒歩\s*(\d+)(?:\s*[~〜～]\s*\d+)?\s*分/g)].map(m =>
+    Number(m[1])
+  );
   return minutes.length > 0 ? Math.min(...minutes) : null;
 }
 

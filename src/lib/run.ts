@@ -159,7 +159,8 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
       if (detail) {
         cached++;
       } else {
-        if (inspected > 0) await sleep(paceDelay(settings.requestDelayMs, pacer.cooldownMs));
+        if (inspected > 0)
+          await sleep(paceDelay(settings.requestDelayMs, pacer.cooldownMs), signal);
 
         inspected++;
         onProgress?.({

@@ -188,11 +188,19 @@ export function parseListingCards(root: Document | ParentNode, baseUrl: string):
     seen.add(id);
 
     const fields = parseCardFields(card);
+    const price = readCardPrice(card);
+
+    // The card prints the price outside the label/value table, so it has to be
+    // put into the field map by hand. Without it the price filter finds no
+    // field to read and holds off, and every property over budget still gets
+    // its detail page opened.
+    if (price && !('価格' in fields)) fields['価格'] = price;
+
     listings.push({
       id,
       url,
       name: readCardName(card),
-      price: readCardPrice(card),
+      price,
       area: fields['土地面積'] ?? '',
       location: fields['所在地'] ?? '',
       traffic: fields['交通'] ?? '',
