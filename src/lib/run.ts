@@ -1,4 +1,12 @@
-import { AbortedError, fetchDetail, sleep, streamDetailLinks } from './crawler';
+import { MAX_DETAIL_FETCHES } from './config';
+import {
+  AbortedError,
+  fetchDetail,
+  newListCrawlReport,
+  sleep,
+  streamDetailLinks,
+  type ListCrawlReport
+} from './crawler';
 import { describeActiveFilters, evaluate } from './evaluate';
 import type { PropertyResult, ResultSet, Settings, StopReason } from './types';
 
@@ -14,17 +22,34 @@ export interface RunProgress {
 export interface RunOptions {
   searchUrl: string;
   settings: Settings;
-  seedLinks?: string[];
   signal?: AbortSignal;
   onProgress?: (progress: RunProgress) => void;
 }
 
 /**
  * Ceiling on detail pages opened in one run, so that a filter set nothing can
- * satisfy stops instead of walking the entire search.
+ * satisfy stops instead of walking the entire search. A「全件」run has no goal
+ * to stop at, so it gets the standing ceiling instead of one scaled to a goal.
  */
 export function inspectLimitFor(target: number): number {
+  if (target <= 0) return MAX_DETAIL_FETCHES;
   return Math.min(1200, Math.max(200, target * 10));
+}
+
+/**
+ * A goal met, or a cap hit, outranks however the list crawl ended: both mean
+ * the run stopped on purpose with the results it was asked for.
+ */
+export function resolveStopReason(
+  report: ListCrawlReport,
+  passed: number,
+  target: number,
+  inspected: number,
+  inspectLimit: number
+): StopReason {
+  if (target > 0 && passed >= target) return 'target';
+  if (inspected >= inspectLimit) return 'limit';
+  return report.stoppedBy ?? 'exhausted';
 }
 
 function failedResult(url: string): PropertyResult {
@@ -47,12 +72,12 @@ function failedResult(url: string): PropertyResult {
  * progress as it goes. Throws `AbortedError` if `signal` fires.
  */
 export async function runFilter(options: RunOptions): Promise<ResultSet> {
-  const { searchUrl, settings, seedLinks, signal, onProgress } = options;
+  const { searchUrl, settings, signal, onProgress } = options;
   const target = settings.targetCount;
   const inspectLimit = inspectLimitFor(target);
 
   const properties: PropertyResult[] = [];
-  let pagesCrawled = 0;
+  const report = newListCrawlReport();
   let inspected = 0;
   let passed = 0;
   let excluded = 0;
@@ -62,12 +87,12 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
     baseUrl: searchUrl,
     delayMs: settings.requestDelayMs,
     signal,
-    seedLinks,
-    onPage: (pages, linksSeen) => {
-      pagesCrawled = pages;
+    report,
+    onPage: (progress, linksSeen) => {
+      const of = progress.totalCount === null ? '' : ` / 全 ${progress.totalCount}件`;
       onProgress?.({
         phase: 'list',
-        message: `リスト ${pages} ページ目（候補 ${linksSeen}件）`,
+        message: `リスト ${progress.pagesCrawled} ページ目（候補 ${linksSeen}件${of}）`,
         current: passed,
         total: target
       });
@@ -76,13 +101,17 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
 
   for await (const url of links) {
     if (signal?.aborted) throw new AbortedError();
-    if (passed >= target || inspected >= inspectLimit) break;
+    if (target > 0 && passed >= target) break;
+    if (inspected >= inspectLimit) break;
     if (inspected > 0) await sleep(settings.requestDelayMs);
 
     inspected++;
     onProgress?.({
       phase: 'detail',
-      message: `合致 ${passed} / ${target}件（${inspected}件目を確認中）`,
+      message:
+        target > 0
+          ? `合致 ${passed} / ${target}件（${inspected}件目を確認中）`
+          : `合致 ${passed}件（${inspected}件目を確認中）`,
       current: passed,
       total: target
     });
@@ -100,8 +129,7 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
     properties.push({ url, passed: reasons.length === 0, reasons, ...detail });
   }
 
-  const stoppedBy: StopReason =
-    passed >= target ? 'target' : inspected >= inspectLimit ? 'limit' : 'exhausted';
+  const stoppedBy = resolveStopReason(report, passed, target, inspected, inspectLimit);
 
   onProgress?.({
     phase: 'done',
@@ -114,11 +142,12 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
     timestamp: Date.now(),
     searchUrl,
     requested: target,
+    totalCount: report.totalCount,
     inspected,
     passed,
     excluded,
     failed,
-    pagesCrawled,
+    pagesCrawled: report.pagesCrawled,
     stoppedBy,
     inspectLimit,
     activeFilters: describeActiveFilters(settings.filters),

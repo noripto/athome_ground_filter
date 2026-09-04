@@ -30,14 +30,32 @@
 
   const crawledAt = $derived(new Date(results.timestamp).toLocaleString('ja-JP'));
 
-  // Only worth saying something when the run fell short of the requested count.
-  const stopNote = $derived(
-    results.stoppedBy === 'target'
-      ? ''
-      : results.stoppedBy === 'exhausted'
-        ? `⚠ 指定の ${results.requested}件に届く前に検索結果が尽きました（検索条件を広げてください）`
-        : `⚠ 確認件数の上限 ${results.inspectLimit}件に達したため中断しました（条件が厳しすぎる可能性があります）`
-  );
+  // Only worth saying something when the run ended somewhere other than where
+  // it meant to. Anything but 'target' and 'complete' is worth explaining, and
+  // several of these used to be reported as「検索結果が尽きました」.
+  const stopNote = $derived.by(() => {
+    switch (results.stoppedBy) {
+      case 'target':
+      case 'complete':
+        return '';
+      case 'exhausted':
+        return results.requested > 0
+          ? `⚠ 指定の ${results.requested}件に届く前に検索結果が尽きました（検索条件を広げてください）`
+          : '⚠ 検索結果をすべて読み終えました';
+      case 'limit':
+        return `⚠ 確認件数の上限 ${results.inspectLimit}件に達したため中断しました（条件が厳しすぎる可能性があります）`;
+      case 'paging':
+        return '⚠ ページ送りが効きませんでした（athome 側の URL 仕様が変わった可能性があります）';
+      case 'blocked':
+        return '⚠ athome のアクセス制限に掛かったため中断しました（時間を空けるか、取得間隔を長くして再実行してください）';
+      case 'http':
+        return `⚠ 通信エラーが続いたため ${results.pagesCrawled} ページ目で中断しました`;
+      case 'aborted':
+        return '中断しました（ここまでの結果は保存済みです）';
+      default:
+        return '';
+    }
+  });
 </script>
 
 <div class="view">
@@ -45,12 +63,18 @@
     <div class="head-main">
       <h1>🏗 土地フィルター 結果</h1>
       <div class="stats">
-        <span class="stat ok">✓ 合致 {results.passed} / 指定 {results.requested}件</span>
+        <span class="stat ok">
+          ✓ 合致 {results.passed}{results.requested > 0 ? ` / 指定 ${results.requested}` : ''}件
+        </span>
         <span class="stat ng">✗ 除外 {results.excluded}件</span>
         {#if results.failed}
           <span class="stat">取得失敗 {results.failed}件</span>
         {/if}
         <span class="stat">確認 {results.inspected}件 / {results.pagesCrawled}ページ</span>
+        <!-- Loose check: results stored before this field existed have none. -->
+        {#if results.totalCount != null}
+          <span class="stat">検索該当 {results.totalCount.toLocaleString('ja-JP')}件</span>
+        {/if}
       </div>
       {#if stopNote}
         <div class="meta warn">{stopNote}</div>

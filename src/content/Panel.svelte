@@ -1,8 +1,8 @@
 <script lang="ts">
   import FilterEditor from '../components/FilterEditor.svelte';
   import ResultsView from '../components/ResultsView.svelte';
-  import { COUNT_PRESETS } from '../lib/config';
-  import { AbortedError, extractDetailLinks } from '../lib/crawler';
+  import { COUNT_PRESETS, countLabel } from '../lib/config';
+  import { AbortedError } from '../lib/crawler';
   import { runFilter, type RunProgress } from '../lib/run';
   import { loadSettings, onSettingsChanged, saveResults, saveSettings } from '../lib/storage';
   import type { ResultSet, Settings } from '../lib/types';
@@ -50,7 +50,6 @@
       const resultSet = await runFilter({
         searchUrl: window.location.href,
         settings: $state.snapshot(settings),
-        seedLinks: extractDetailLinks(document, window.location.href),
         signal: controller.signal,
         onProgress: next => {
           progress = next;
@@ -111,7 +110,7 @@
             class="preset"
             class:active={settings.targetCount === preset}
             disabled={running}
-            onclick={() => setTargetCount(preset)}>{preset}</button
+            onclick={() => setTargetCount(preset)}>{countLabel(preset)}</button
           >
         {/each}
       </div>
@@ -122,7 +121,8 @@
         <button type="button" class="run" onclick={run}>フィルター実行</button>
       {/if}
 
-      {#if progress}
+      <!-- A「全件」run has no goal to measure against, so it shows no bar. -->
+      {#if progress && progress.total > 0}
         <div class="bar"><div class="fill" style:width="{percent}%"></div></div>
       {/if}
 
@@ -135,7 +135,9 @@
 
       {#if results}
         <div class="summary">
-          <span class="ok">✓ 合致 {results.passed} / {results.requested}件</span>
+          <span class="ok">
+            ✓ 合致 {results.passed}{results.requested > 0 ? ` / ${results.requested}` : ''}件
+          </span>
           <span class="ng">✗ 除外 {results.excluded}件</span>
           {#if results.failed}<span class="faint">失敗 {results.failed}件</span>{/if}
         </div>

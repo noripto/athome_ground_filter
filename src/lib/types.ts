@@ -62,7 +62,10 @@ export type FilterState =
 export type FilterSettings = Record<string, FilterState>;
 
 export interface Settings {
-  /** How many *passing* properties to look for. Excluded ones do not count. */
+  /**
+   * How many *passing* properties to look for. Excluded ones do not count.
+   * Zero means every property the search has, capped only by the safety limit.
+   */
   targetCount: number;
   /** Delay between detail-page fetches, in ms. Keeps the crawl polite. */
   requestDelayMs: number;
@@ -84,14 +87,37 @@ export interface PropertyResult {
   fields: Record<string, string>;
 }
 
-/** Why the crawl stopped: the goal was met, the search ran dry, or a cap hit. */
-export type StopReason = 'target' | 'exhausted' | 'limit';
+/**
+ * Why the crawl stopped. `exhausted` used to stand in for every ending that
+ * wasn't the goal or a cap, which hid real failures behind a message telling
+ * the user to widen their search; the rest of these name those failures.
+ * Results stored by older versions only ever carry the first three.
+ */
+export type StopReason =
+  /** The requested number of passing properties was found. */
+  | 'target'
+  /** The search ran dry before the goal was met. */
+  | 'exhausted'
+  /** A safety cap on pages or detail fetches was reached. */
+  | 'limit'
+  /** Every page the search says it has was read. */
+  | 'complete'
+  /** The user pressed cancel. */
+  | 'aborted'
+  /** athome kept answering with its bot check. */
+  | 'blocked'
+  /** Requests kept failing after every retry. */
+  | 'http'
+  /** A list page came back identical to the one before it. */
+  | 'paging';
 
 export interface ResultSet {
   timestamp: number;
   searchUrl: string;
-  /** How many passing properties were asked for. */
+  /** How many passing properties were asked for. Zero means「全件」. */
   requested: number;
+  /** The hit count athome reports for this search, when it could be read. */
+  totalCount: number | null;
   /** How many detail pages were opened to find them. */
   inspected: number;
   passed: number;

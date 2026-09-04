@@ -1,6 +1,13 @@
 <script lang="ts">
   import FilterRow from './FilterRow.svelte';
-  import { COUNT_PRESETS, FILTER_DEFS, SECTIONS, getFilterDef } from '../lib/config';
+  import {
+    COUNT_PRESETS,
+    FILTER_DEFS,
+    MIN_REQUEST_DELAY_MS,
+    SECTIONS,
+    countLabel,
+    getFilterDef
+  } from '../lib/config';
   import { describeActiveFilters } from '../lib/evaluate';
   import { inspectLimitFor } from '../lib/run';
   import { loadSettings, resetSettings, saveSettings } from '../lib/storage';
@@ -75,13 +82,19 @@
               type="button"
               class="preset"
               class:active={settings.targetCount === preset}
-              onclick={() => settings && (settings.targetCount = preset)}>{preset}件</button
+              onclick={() => settings && (settings.targetCount = preset)}
+              >{countLabel(preset)}</button
             >
           {/each}
         </div>
         <div class="crawl-help">
-          条件に合致した物件がこの件数に達するまでページを辿ります。除外された物件は件数に含まれません。
-          合致が集まらない場合は、詳細ページを {inspectLimit} 件確認した時点で打ち切ります。
+          {#if settings.targetCount === 0}
+            検索結果を最後のページまで辿ります。除外された物件も含め、詳細ページを
+            {inspectLimit} 件確認した時点で打ち切ります。
+          {:else}
+            条件に合致した物件がこの件数に達するまでページを辿ります。除外された物件は件数に含まれません。
+            合致が集まらない場合は、詳細ページを {inspectLimit} 件確認した時点で打ち切ります。
+          {/if}
         </div>
       </div>
 
@@ -91,12 +104,14 @@
           id="agf-delay"
           class="agf-num"
           type="number"
-          min="0"
+          min={MIN_REQUEST_DELAY_MS}
           max="5000"
           step="100"
           bind:value={settings.requestDelayMs}
         />
-        <span class="agf-unit">ms — 短くしすぎるとサイト側に負荷がかかります</span>
+        <span class="agf-unit">
+          ms — 短くすると athome のアクセス制限に掛かりやすくなります（{MIN_REQUEST_DELAY_MS} 以上）
+        </span>
       </div>
 
       <div class="crawl">
