@@ -18,9 +18,11 @@
     title?: string;
     /** Rendered when the editor lives in a dismissable overlay. */
     onclose?: () => void;
+    /** Called after a save, for a caller that acts on the new conditions. */
+    onapply?: (settings: Settings) => void;
   }
 
-  let { title = '⚙ 土地フィルター 設定', onclose }: Props = $props();
+  let { title = '⚙ 土地フィルター 設定', onclose, onapply }: Props = $props();
 
   let settings = $state<Settings | null>(null);
   let cachedCount = $state<number | null>(null);
@@ -62,9 +64,11 @@
 
   async function save() {
     if (!settings) return;
-    await saveSettings($state.snapshot(settings));
+    const saved = $state.snapshot(settings);
+    await saveSettings(saved);
     const active = activeSummary.length;
     flash(`✓ 保存しました（有効な条件: ${active ? `${active}件` : 'なし'}）`);
+    onapply?.(saved);
   }
 
   async function reset() {

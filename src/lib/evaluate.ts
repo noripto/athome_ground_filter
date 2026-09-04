@@ -1,6 +1,8 @@
 import { FILTER_DEFS } from './config';
+import { parseAreaSqm, parsePriceMan } from './numbers';
 import type {
   ExcludeTextState,
+  NumericRangeDef,
   FilterSettings,
   MinRoadWidthState,
   NumericRangeState,
@@ -25,6 +27,17 @@ function parseWidths(raw: string): number[] {
 function parseLeadingNumber(raw: string): number | null {
   const m = raw.replace(/,/g, '').match(/(\d+(?:\.\d+)?)/);
   return m ? Number.parseFloat(m[1]) : null;
+}
+
+/**
+ * Percentages read fine as the first number in the cell, but prices and areas
+ * do not: 「1億500万円」 leads with a 1, so a maximum of 2000万 used to let
+ * every property over a hundred million straight through.
+ */
+function readRangeValue(raw: string, parseAs: NumericRangeDef['parseAs']): number | null {
+  if (parseAs === 'price') return parsePriceMan(raw);
+  if (parseAs === 'area') return parseAreaSqm(raw);
+  return parseLeadingNumber(raw);
 }
 
 export interface EvaluateOptions {
@@ -78,7 +91,7 @@ export function evaluate(
       }
       case 'numeric_range': {
         const { min, max } = state as NumericRangeState;
-        const n = parseLeadingNumber(raw);
+        const n = readRangeValue(raw, def.parseAs);
         if (n === null) break;
         if (min !== null && n < min) reasons.push(`${def.label}: ${n}${def.unit} < ${min}`);
         if (max !== null && n > max) reasons.push(`${def.label}: ${n}${def.unit} > ${max}`);

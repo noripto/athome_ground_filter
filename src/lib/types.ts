@@ -34,6 +34,12 @@ export interface NumericRangeDef extends BaseFilterDef {
   unit: string;
   defaultMin: number | null;
   defaultMax: number | null;
+  /**
+   * How to read the value. Percentages are plain numbers, but a price is
+   * written 「1億500万円」 and an area 「132.45m²（40.06坪）」, neither of which
+   * survives being read as the first number in the string.
+   */
+  parseAs?: 'price' | 'area';
 }
 
 export type FilterDef = ExcludeTextDef | MinRoadWidthDef | RequireContainsDef | NumericRangeDef;

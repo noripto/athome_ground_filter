@@ -1,6 +1,16 @@
 <script lang="ts">
+  import FilterEditor from './FilterEditor.svelte';
   import ResultCard from './ResultCard.svelte';
-  import type { ResultSet } from '../lib/types';
+  import {
+    SORT_OPTIONS,
+    applyViewFilter,
+    emptyViewFilter,
+    isViewFilterActive,
+    refilter,
+    sortProperties,
+    type ViewFilter
+  } from '../lib/view';
+  import type { FilterSettings, ResultSet, Settings } from '../lib/types';
 
   type Tab = 'ok' | 'ng' | 'all';
 
@@ -13,20 +23,49 @@
   let { results, onclose }: Props = $props();
 
   let tab = $state<Tab>('ok');
+  let sortIndex = $state(0);
+  let refilterOpen = $state(false);
+  let view = $state<ViewFilter>(emptyViewFilter());
 
-  const visible = $derived(
-    tab === 'ok'
-      ? results.properties.filter(p => p.passed)
-      : tab === 'ng'
-        ? results.properties.filter(p => !p.passed)
-        : results.properties
+  /**
+   * Conditions the user has changed since the run. `evaluate` only ever read a
+   * field map and those were all kept, so re-judging every property costs a
+   * pass over an array and nothing else — no crawling, no waiting.
+   */
+  let liveFilters = $state<FilterSettings | null>(null);
+
+  const judged = $derived(
+    liveFilters ? refilter(results.properties, liveFilters) : results.properties
   );
+
+  const byTab = $derived(
+    tab === 'ok'
+      ? judged.filter(p => p.passed)
+      : tab === 'ng'
+        ? judged.filter(p => !p.passed)
+        : judged
+  );
+
+  const visible = $derived(sortProperties(applyViewFilter(byTab, view), SORT_OPTIONS[sortIndex]));
+
+  const narrowed = $derived(isViewFilterActive(view) || liveFilters !== null);
+  const passedNow = $derived(judged.filter(p => p.passed).length);
 
   const tabs: { id: Tab; label: string }[] = [
     { id: 'ok', label: '合致のみ' },
     { id: 'ng', label: '除外のみ' },
     { id: 'all', label: '全件' }
   ];
+
+  function applyFilters(next: Settings) {
+    liveFilters = next.filters;
+    refilterOpen = false;
+  }
+
+  function resetView() {
+    view = emptyViewFilter();
+    liveFilters = null;
+  }
 
   const crawledAt = $derived(new Date(results.timestamp).toLocaleString('ja-JP'));
 
@@ -98,6 +137,10 @@
     {/if}
   </header>
 
+  <!--
+    Everything below works over results already in hand: no request is made,
+    however the conditions are changed.
+  -->
   <div class="controls">
     {#each tabs as entry (entry.id)}
       <button
@@ -107,8 +150,106 @@
         onclick={() => (tab = entry.id)}>{entry.label}</button
       >
     {/each}
-    <span class="count">{visible.length}件表示</span>
+
+    <label class="sort">
+      並び替え
+      <select bind:value={sortIndex}>
+        {#each SORT_OPTIONS as option, index (option.label)}
+          <option value={index}>{option.label}</option>
+        {/each}
+      </select>
+    </label>
+
+    <button
+      type="button"
+      class="tab"
+      class:active={refilterOpen}
+      onclick={() => (refilterOpen = !refilterOpen)}
+    >
+      🔎 条件を変えて絞り込む
+    </button>
+
+    <span class="count">
+      {visible.length}件表示{narrowed ? `（合致 ${passedNow}件）` : ''}
+    </span>
   </div>
+
+  <div class="narrow">
+    <input
+      class="agf-num keyword"
+      type="search"
+      placeholder="物件名・所在地・駅で絞り込み"
+      bind:value={view.keyword}
+    />
+    <span class="range">
+      価格
+      <input
+        class="agf-num"
+        type="number"
+        min="0"
+        step="100"
+        placeholder="下限"
+        bind:value={view.minPriceMan}
+      />
+      〜
+      <input
+        class="agf-num"
+        type="number"
+        min="0"
+        step="100"
+        placeholder="上限"
+        bind:value={view.maxPriceMan}
+      />
+      万円
+    </span>
+    <span class="range">
+      面積
+      <input
+        class="agf-num"
+        type="number"
+        min="0"
+        step="10"
+        placeholder="下限"
+        bind:value={view.minAreaSqm}
+      />
+      〜
+      <input
+        class="agf-num"
+        type="number"
+        min="0"
+        step="10"
+        placeholder="上限"
+        bind:value={view.maxAreaSqm}
+      />
+      m²
+    </span>
+    <span class="range">
+      駅徒歩
+      <input
+        class="agf-num"
+        type="number"
+        min="0"
+        step="1"
+        placeholder="以内"
+        bind:value={view.maxWalkMinutes}
+      />
+      分
+    </span>
+    {#if narrowed}
+      <button type="button" class="agf-btn agf-btn-ghost" onclick={resetView}>条件をリセット</button
+      >
+    {/if}
+  </div>
+
+  {#if refilterOpen}
+    <div class="refilter">
+      <FilterEditor
+        title="🔎 条件を変えて絞り込み直す（再取得なし）"
+        onapply={applyFilters}
+        onclose={() => (refilterOpen = false)}
+      />
+    </div>
+  {/if}
 
   <div class="main">
     {#if visible.length === 0}
@@ -179,6 +320,50 @@
     display: flex;
     gap: 8px;
     align-items: center;
+    flex-wrap: wrap;
+  }
+  .sort {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #666;
+    margin-left: 8px;
+  }
+  .sort select {
+    font: inherit;
+    font-size: 12px;
+    padding: 4px 6px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    background: #fff;
+    color: #333;
+  }
+  .narrow {
+    background: var(--agf-surface);
+    border-bottom: 1px solid var(--agf-border);
+    padding: 8px 20px 10px;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: #666;
+  }
+  .narrow .keyword {
+    width: 240px;
+  }
+  .range {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .range :global(.agf-num) {
+    width: 74px;
+  }
+  .refilter {
+    border-bottom: 1px solid var(--agf-border);
+    background: var(--agf-bg);
   }
   .tab {
     padding: 5px 16px;

@@ -174,6 +174,7 @@ export const FILTER_DEFS: FilterDef[] = [
     detailKey: '土地面積',
     type: 'numeric_range',
     unit: 'm²',
+    parseAs: 'area',
     defaultEnabled: false,
     defaultMin: null,
     defaultMax: null
@@ -184,6 +185,7 @@ export const FILTER_DEFS: FilterDef[] = [
     detailKey: '価格',
     type: 'numeric_range',
     unit: '万円',
+    parseAs: 'price',
     defaultEnabled: false,
     defaultMin: null,
     defaultMax: null

@@ -5,6 +5,13 @@
  */
 import { buildPageUrl, canonicalSearchKey, expectedPages } from '../src/lib/crawler';
 import { isFresh } from '../src/lib/db';
+import {
+  parseAreaSqm,
+  parsePriceMan,
+  parseWalkMinutes,
+  unitPriceManPerTsubo
+} from '../src/lib/numbers';
+import { applyViewFilter, emptyViewFilter, refilter, sortProperties } from '../src/lib/view';
 import { detailIdFromUrl, parseTotalCount, splitFieldPair } from '../src/lib/markup';
 import { describeActiveFilters, evaluate, findField } from '../src/lib/evaluate';
 import { getDefaultSettings, LIST_PAGE_SIZE } from '../src/lib/config';
@@ -322,6 +329,123 @@ eq('a small goal still gets a usable budget', inspectLimitFor(5), 200);
 eq('the budget is ten times the goal', inspectLimitFor(30), 300);
 eq('the budget is capped', inspectLimitFor(500), 1200);
 eq('an unbounded run gets the standing ceiling', inspectLimitFor(0), 5000);
+
+// ── Reading athome's figures ────────────────────────────────────────────────
+// Everything the site prints is prose, and reading it naively goes wrong
+// quietly: a leading-number scan turns 「1億500万円」 into 1.
+eq('a plain price', parsePriceMan('1,280万円'), 1280);
+eq('hundreds of millions', parsePriceMan('1億500万円'), 10500);
+eq('a round 億', parsePriceMan('1億円'), 10000);
+eq('a range takes its lower bound', parsePriceMan('9,500万円～1億2,000万円'), 9500);
+eq('a full-width range separator', parsePriceMan('1,650万円〜2,920万円'), 1650);
+eq('a price on application is unknown', parsePriceMan('応相談'), null);
+eq('an empty price is unknown', parsePriceMan(''), null);
+
+eq('an area in m²', parseAreaSqm('132.45m²（40.06坪）'), 132.45);
+eq('an area range takes its lower bound', parseAreaSqm('61.24m²～71.37m²'), 61.24);
+eq('a dash is not an area', parseAreaSqm('―'), null);
+eq('an area given only in 坪 converts', Math.round(parseAreaSqm('10坪') ?? 0), 33);
+
+eq(
+  'the nearest station wins',
+  parseWalkMinutes('JR中央線 三鷹駅 徒歩12分 ／ 京王線 調布駅 徒歩8分'),
+  8
+);
+eq('a bus leg is not a walk', parseWalkMinutes('バス15分 停歩3分 徒歩5分'), 5);
+eq('no walk stated is unknown', parseWalkMinutes('車6km'), null);
+
+eq(
+  'a unit price in 万円/坪',
+  Math.round((unitPriceManPerTsubo(1280, 132.45) ?? 0) * 100) / 100,
+  31.95
+);
+eq('an unknown price yields no unit price', unitPriceManPerTsubo(null, 132.45), null);
+eq('an unknown area yields no unit price', unitPriceManPerTsubo(1280, null), null);
+
+// The regression this fixes: a maximum of 2000万 used to let 1億500万 through,
+// because the value was read as「1」.
+eq(
+  'a price over 一億 is excluded by a 2000万 maximum',
+  evaluate({ kakaku: { enabled: true, min: null, max: 2000 } }, { 価格: '1億500万円' }).length,
+  1
+);
+eq(
+  'a price under the maximum still passes',
+  evaluate({ kakaku: { enabled: true, min: null, max: 2000 } }, { 価格: '1,280万円' }),
+  []
+);
+
+// ── Sorting ─────────────────────────────────────────────────────────────────
+// Sorting by cheapest must not open with the ones whose price is unknown.
+const property = (name: string, price: string, area = '', traffic = '') => ({
+  url: `https://www.athome.co.jp/tochi/${name}/`,
+  passed: true,
+  reasons: [],
+  name,
+  price,
+  area,
+  location: '東京都八王子市',
+  traffic,
+  fields: {}
+});
+
+const listing = [
+  property('a', '2,000万円', '100m²'),
+  property('b', '応相談'),
+  property('c', '1億円', '400m²'),
+  property('d', '800万円', '50m²')
+];
+
+eq(
+  'cheapest first, unknown prices last',
+  sortProperties(listing, { key: 'price', label: '', ascending: true }).map(p => p.name),
+  ['d', 'a', 'c', 'b']
+);
+eq(
+  'dearest first, unknown prices still last',
+  sortProperties(listing, { key: 'price', label: '', ascending: false }).map(p => p.name),
+  ['c', 'a', 'd', 'b']
+);
+eq(
+  'the order found is left alone',
+  sortProperties(listing, { key: 'found', label: '', ascending: true }).map(p => p.name),
+  ['a', 'b', 'c', 'd']
+);
+eq(
+  'largest area first',
+  sortProperties(listing, { key: 'area', label: '', ascending: false }).map(p => p.name),
+  ['c', 'a', 'd', 'b']
+);
+
+// ── Narrowing what is already in hand ───────────────────────────────────────
+eq(
+  'a keyword matches the address',
+  applyViewFilter(listing, { ...emptyViewFilter(), keyword: '八王子' }).length,
+  4
+);
+eq(
+  'a keyword that matches nothing narrows to nothing',
+  applyViewFilter(listing, { ...emptyViewFilter(), keyword: '横浜' }).length,
+  0
+);
+eq(
+  'a price ceiling drops the ones above it and the unreadable ones',
+  applyViewFilter(listing, { ...emptyViewFilter(), maxPriceMan: 2000 }).map(p => p.name),
+  ['a', 'd']
+);
+eq('no conditions means no narrowing', applyViewFilter(listing, emptyViewFilter()).length, 4);
+
+// ── Re-judging without crawling again ───────────────────────────────────────
+const collected = [
+  { ...property('e', '1,000万円'), fields: { 地目: '宅地' }, passed: true, reasons: [] },
+  { ...property('f', '1,000万円'), fields: { 地目: '畑' }, passed: true, reasons: [] }
+];
+const rejudged = refilter(collected, { chimoku: { enabled: true, values: ['畑'] } });
+
+eq('a property the new conditions accept still passes', rejudged[0].passed, true);
+eq('a property the new conditions reject is excluded', rejudged[1].passed, false);
+eq('and it says why', rejudged[1].reasons, ['地目: 畑']);
+eq('the collected fields are left untouched', rejudged[1].fields, { 地目: '畑' });
 
 // ── Field lookup ────────────────────────────────────────────────────────────
 eq('keys match partially', findField({ 接道状況: '南 幅員4.5m' }, '接道'), '南 幅員4.5m');
