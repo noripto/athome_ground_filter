@@ -79,6 +79,11 @@ body.agf-page *::after {
 .agf-btn-link:hover:not(:disabled) {
   background: var(--agf-link-dark);
 }
+/*
+ * Both of these are drawn in the header's own colours, so they only read
+ * against an accent-coloured bar. On a white surface they are white on white —
+ * use `agf-btn-secondary` there instead.
+ */
 .agf-btn-ghost {
   background: rgba(255, 255, 255, 0.15);
   color: #fff;
@@ -86,6 +91,21 @@ body.agf-page *::after {
 }
 .agf-btn-ghost:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.3);
+}
+.agf-btn-save {
+  background: #fff;
+  color: var(--agf-accent);
+}
+.agf-btn-save:hover:not(:disabled) {
+  background: var(--agf-accent-soft);
+}
+/* Distinct from the accent start button, so the two do not swap in place. */
+.agf-btn-stop {
+  background: #555;
+  color: #fff;
+}
+.agf-btn-stop:hover:not(:disabled) {
+  background: #333;
 }
 
 /* ── Form controls ───────────────────────────────────────────────────────── */

@@ -169,7 +169,7 @@
         <div class="crawl">
           <span class="crawl-label">保存済みの詳細</span>
           <span class="agf-unit">{cachedCount === null ? '確認中…' : `${cachedCount}件`}</span>
-          <button type="button" class="agf-btn agf-btn-ghost" onclick={dropCache}>
+          <button type="button" class="agf-btn agf-btn-secondary" onclick={dropCache}>
             キャッシュを削除
           </button>
         </div>
@@ -227,13 +227,6 @@
   .actions {
     display: flex;
     gap: 8px;
-  }
-  :global(.agf-btn-save) {
-    background: #fff;
-    color: var(--agf-accent);
-  }
-  :global(.agf-btn-save:hover) {
-    background: #ffe8e6;
   }
   .notice {
     background: var(--agf-ok-soft);

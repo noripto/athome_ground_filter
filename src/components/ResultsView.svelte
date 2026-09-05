@@ -300,7 +300,8 @@
       分
     </span>
     {#if narrowed}
-      <button type="button" class="agf-btn agf-btn-ghost" onclick={resetView}>条件をリセット</button
+      <button type="button" class="agf-btn agf-btn-secondary" onclick={resetView}
+        >条件をリセット</button
       >
     {/if}
   </div>
@@ -326,7 +327,7 @@
       </div>
       {#if remaining > 0}
         <div class="more">
-          <button type="button" class="agf-btn" onclick={() => (shown += PAGE)}>
+          <button type="button" class="agf-btn agf-btn-secondary" onclick={() => (shown += PAGE)}>
             さらに {Math.min(PAGE, remaining)}件表示（残り {remaining}件）
           </button>
         </div>

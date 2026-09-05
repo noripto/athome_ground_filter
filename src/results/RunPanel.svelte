@@ -42,9 +42,9 @@
       </div>
     </div>
     {#if running}
-      <button type="button" class="agf-btn agf-btn-ghost" onclick={oncancel}>■ 中断する</button>
+      <button type="button" class="agf-btn agf-btn-stop" onclick={oncancel}>■ 中断する</button>
     {:else}
-      <button type="button" class="agf-btn agf-btn-save" onclick={onstart}>🚀 取得を開始</button>
+      <button type="button" class="agf-btn agf-btn-primary" onclick={onstart}>🚀 取得を開始</button>
     {/if}
   </div>
 
