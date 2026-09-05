@@ -6,12 +6,6 @@
   import { loadResults, loadSettings, saveResults } from '../lib/storage';
   import type { PropertyResult, ResultSet, Settings } from '../lib/types';
 
-  /**
-   * The crawl lives here rather than in the content script. This tab outlives
-   * whatever the user does on athome.co.jp, which a run of thousands of
-   * requests needs; the search it should walk arrives in the URL, so a reload
-   * picks up exactly where a fresh start would.
-   */
   const params = new URLSearchParams(window.location.search);
   const searchUrl = params.get('search') ?? '';
   const autostart = params.get('autostart') === '1';
@@ -25,12 +19,6 @@
   let error = $state('');
   let controller: AbortController | null = null;
 
-  /**
-   * Results arriving mid-run are collected in a plain array and copied into
-   * state on a timer. A run turns up thousands of properties, and pushing each
-   * one straight into `$state` would re-derive the sort, the tab split and the
-   * view filter once per property.
-   */
   const SNAPSHOT_MS = 500;
   const EMPTY_TALLIES: RunTallies = {
     inspected: 0,
@@ -48,14 +36,8 @@
   let liveTallies = $state<RunTallies | null>(null);
   let snapshots: ReturnType<typeof setInterval> | null = null;
 
-  /**
-   * What the finished run would return if it stopped right now, so the results
-   * view can render the same way whether the crawl is still going or over.
-   */
   const liveResults = $derived.by<ResultSet | null>(() => {
     if (!settings) return null;
-    // Zeroes until the first list page lands, so the run has something to show
-    // from the moment it starts rather than a blank page for the first fetch.
     const t = liveTallies ?? EMPTY_TALLIES;
     return {
       timestamp: Date.now(),
@@ -77,7 +59,6 @@
     };
   });
 
-  // A run in progress shows itself; anything else shows the last finished run.
   const shownResults = $derived(running ? liveResults : results);
 
   function snapshot() {
@@ -93,8 +74,6 @@
     if (searchUrl && autostart) run();
   });
 
-  // Closing the tab mid-run loses everything read so far, which for a whole
-  // search is a lot of somebody else's bandwidth as well as the user's time.
   $effect(() => {
     if (!running) return;
     const warn = (event: BeforeUnloadEvent) => event.preventDefault();
@@ -143,8 +122,6 @@
     } finally {
       if (snapshots !== null) clearInterval(snapshots);
       snapshots = null;
-      // Whatever a cancelled or failed run had already found still gets shown,
-      // through `liveResults`, so the last few properties belong in there too.
       snapshot();
       running = false;
       controller = null;

@@ -16,9 +16,7 @@
 
   interface Props {
     title?: string;
-    /** Rendered when the editor lives in a dismissable overlay. */
     onclose?: () => void;
-    /** Called after a save, for a caller that acts on the new conditions. */
     onapply?: (settings: Settings) => void;
   }
 
@@ -29,12 +27,6 @@
   let notice = $state('');
   let noticeTimer: ReturnType<typeof setTimeout> | undefined;
 
-  /**
-   * IndexedDB belongs to the page's origin, and this editor also opens inside
-   * athome.co.jp as part of the content script — where it would be reading
-   * athome's storage, not the extension's. The cache only exists where the
-   * crawl runs, so it is only shown there.
-   */
   const ownsCache = window.location.protocol === 'chrome-extension:';
 
   function refreshCacheCount() {

@@ -20,8 +20,6 @@
 
   const activeFilters = $derived(describeActiveFilters(settings.filters));
 
-  // A「全件」run has no goal to measure against, so it reports a count rather
-  // than a proportion and shows no bar.
   const percent = $derived(
     progress && progress.total > 0
       ? Math.min(100, Math.round((progress.current / progress.total) * 100))

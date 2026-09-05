@@ -12,11 +12,6 @@ import { describeActiveFilters, evaluate } from './evaluate';
 import { AbortedError, BlockedError, newPacer, paceDelay, sleep } from './fetcher';
 import type { Detail, Listing, PropertyResult, ResultSet, Settings, StopReason } from './types';
 
-/**
- * The counts a run keeps as it goes. A crawl of a whole search takes long
- * enough that the caller has to be able to show a result set before it ends,
- * which means it needs these while they are still moving.
- */
 export interface RunTallies {
   inspected: number;
   passed: number;
@@ -32,9 +27,7 @@ export interface RunTallies {
 export interface RunProgress {
   phase: 'list' | 'detail' | 'done';
   message: string;
-  /** Passing properties found so far. */
   current: number;
-  /** Passing properties still wanted. */
   total: number;
   tallies: RunTallies;
 }
@@ -44,24 +37,14 @@ export interface RunOptions {
   settings: Settings;
   signal?: AbortSignal;
   onProgress?: (progress: RunProgress) => void;
-  /** Called as each property is settled, so results can be shown live. */
   onProperty?: (property: PropertyResult) => void;
 }
 
-/**
- * Ceiling on detail pages opened in one run, so that a filter set nothing can
- * satisfy stops instead of walking the entire search. A「全件」run has no goal
- * to stop at, so it gets the standing ceiling instead of one scaled to a goal.
- */
 export function inspectLimitFor(target: number): number {
   if (target <= 0) return MAX_DETAIL_FETCHES;
   return Math.min(1200, Math.max(200, target * 10));
 }
 
-/**
- * A goal met, or a cap hit, outranks however the list crawl ended: both mean
- * the run stopped on purpose with the results it was asked for.
- */
 export function resolveStopReason(
   report: ListCrawlReport,
   passed: number,
@@ -74,10 +57,6 @@ export function resolveStopReason(
   return report.stoppedBy ?? 'exhausted';
 }
 
-/**
- * Whatever the card said is worth keeping even when the detail page could not
- * be read, so a failed property still shows up as something recognisable.
- */
 function failedResult(listing: Listing): PropertyResult {
   return {
     url: listing.url,
@@ -92,7 +71,6 @@ function failedResult(listing: Listing): PropertyResult {
   };
 }
 
-/** A property ruled out by its card alone, with no detail page ever opened. */
 function prefilteredResult(listing: Listing, reasons: string[]): PropertyResult {
   return {
     url: listing.url,
@@ -107,12 +85,6 @@ function prefilteredResult(listing: Listing, reasons: string[]): PropertyResult 
   };
 }
 
-/**
- * Walks the search results until `settings.targetCount` properties have *passed*
- * the filters — excluded ones do not count towards the goal, and zero means
- * every result there is — reporting progress as it goes. Cancelling through
- * `signal` ends the run and returns what it has, rather than failing.
- */
 export async function runFilter(options: RunOptions): Promise<ResultSet> {
   const { searchUrl, settings, signal, onProgress, onProperty } = options;
   const target = settings.targetCount;
@@ -120,9 +92,6 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
 
   const properties: PropertyResult[] = [];
   const report = newListCrawlReport();
-  // One pace for the whole run: a challenge met while reading list pages has
-  // to slow the detail fetches down too, or the crawl walks straight back into
-  // the same wall.
   const pacer = newPacer();
   const startedAt = Date.now();
   const searchKey = canonicalSearchKey(searchUrl);
@@ -147,7 +116,6 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
     source: report.source
   });
 
-  /** Every settled property goes through here, so the caller sees each one. */
   const record = (property: PropertyResult): void => {
     properties.push(property);
     onProperty?.(property);
@@ -180,8 +148,6 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
       seenIds.push(listing.id);
       void putListing({ ...listing, seenAt: startedAt });
 
-      // The card already answers some of the filters. Ruling a property out
-      // here costs nothing; the detail page it saves is a whole request.
       const cardReasons = evaluate(settings.filters, listing.fields, { presentFieldsOnly: true });
       if (cardReasons.length > 0) {
         excluded++;
@@ -190,9 +156,6 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
         continue;
       }
 
-      // A detail page already read is the whole point of keeping them: what it
-      // says does not change, so a second run over the same search only pays
-      // for the properties that are new.
       const stored = await getDetail(listing.id);
       let detail: Detail | null = isFresh(stored, startedAt, maxAgeMs) ? (stored ?? null) : null;
 
@@ -241,10 +204,6 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
       });
     }
   } catch (err) {
-    // Both of these end the run rather than fail it. A crawl of a whole search
-    // runs long enough that throwing away what it already read — because the
-    // user pressed cancel, or because the site started challenging — would be
-    // the worse outcome by far.
     if (err instanceof AbortedError) report.stoppedBy = 'aborted';
     else if (err instanceof BlockedError) report.stoppedBy = 'blocked';
     else throw err;

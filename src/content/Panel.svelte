@@ -11,8 +11,6 @@
 
   const activeFilters = $derived(settings ? describeActiveFilters(settings.filters) : []);
 
-  // athome prints the search's own hit count in the page header. Showing it
-  // here is what makes「全件」a number the user can weigh before starting.
   const hitCount = $derived.by(() => {
     const text = document.querySelector('.area-top__property--number')?.textContent ?? '';
     const count = Number.parseInt(text.replace(/,/g, ''), 10);
@@ -31,13 +29,6 @@
     await saveSettings($state.snapshot(settings));
   }
 
-  /**
-   * The crawl runs in the extension's own tab rather than here. A full search
-   * takes long enough that navigating away or closing this tab would throw the
-   * work away, and content scripts cannot reach `chrome.tabs` — but
-   * results.html is web-accessible, so opening it by URL works and carries the
-   * search along with it.
-   */
   function start() {
     const url = new URL(chrome.runtime.getURL('results.html'));
     url.searchParams.set('search', window.location.href);

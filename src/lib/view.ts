@@ -1,12 +1,3 @@
-/**
- * Working over results already in hand.
- *
- * Everything here is a pure calculation on what a run collected, so changing a
- * filter or a sort order costs nothing and touches the network not at all.
- * That is most of the value of keeping the whole search: trying a different
- * cut of it should be instant.
- */
-
 import { evaluate } from './evaluate';
 import { parseAreaSqm, parsePriceMan, parseWalkMinutes, unitPriceManPerTsubo } from './numbers';
 import type { FilterSettings, PropertyResult } from './types';
@@ -16,7 +7,6 @@ export type SortKey = 'found' | 'price' | 'area' | 'unitPrice' | 'walk';
 export interface SortOption {
   key: SortKey;
   label: string;
-  /** Which direction reads as the useful one first. */
   ascending: boolean;
 }
 
@@ -30,7 +20,6 @@ export const SORT_OPTIONS: SortOption[] = [
   { key: 'walk', label: '駅から近い', ascending: true }
 ];
 
-/** The numbers behind a result, read out of the text athome printed. */
 export interface Metrics {
   priceMan: number | null;
   areaSqm: number | null;
@@ -64,11 +53,6 @@ function metricFor(metrics: Metrics, key: SortKey): number | null {
   }
 }
 
-/**
- * Sorts a copy. Properties whose figure could not be read — 「応相談」 and the
- * like — always land at the end, in either direction: sorting by cheapest
- * should not open with the ones whose price is unknown.
- */
 export function sortProperties(
   properties: readonly PropertyResult[],
   option: SortOption
@@ -94,18 +78,11 @@ export function sortProperties(
     .map(entry => entry.property);
 }
 
-/**
- * Re-runs the filters over results already collected. `evaluate` only ever
- * looked at a field map, and those were kept, so a changed condition needs no
- * network at all — which is the reason excluded properties are worth storing.
- */
 export function refilter(
   properties: readonly PropertyResult[],
   filters: FilterSettings
 ): PropertyResult[] {
   return properties.map(property => {
-    // A property whose detail page never loaded has nothing to judge, so it
-    // keeps the failure it already carries.
     if (Object.keys(property.fields).length === 0) return property;
     const reasons = evaluate(filters, property.fields);
     return { ...property, passed: reasons.length === 0, reasons };
@@ -113,7 +90,6 @@ export function refilter(
 }
 
 export interface ViewFilter {
-  /** Matched against the name, address and transit text. */
   keyword: string;
   minPriceMan: number | null;
   maxPriceMan: number | null;
@@ -145,14 +121,11 @@ export function isViewFilterActive(filter: ViewFilter): boolean {
 }
 
 function withinRange(value: number | null, min: number | null, max: number | null): boolean {
-  // An unreadable figure is not evidence of anything, so a bound it cannot be
-  // measured against excludes it rather than letting it through unchecked.
   if (min === null && max === null) return true;
   if (value === null) return false;
   return (min === null || value >= min) && (max === null || value <= max);
 }
 
-/** Narrows results in the browser, over data already read. No network. */
 export function applyViewFilter(
   properties: readonly PropertyResult[],
   filter: ViewFilter

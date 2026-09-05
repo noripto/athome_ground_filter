@@ -1,5 +1,3 @@
-// Bundles the TypeScript test file through Vite (so the extensionless imports
-// used across src/ resolve) and runs the result on Node.
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

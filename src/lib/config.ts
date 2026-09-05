@@ -1,6 +1,5 @@
 import type { FilterDef, FilterSettings, Settings } from './types';
 
-/** Detail-page fields surfaced on each result card, in display order. */
 export const DISPLAY_FIELDS = [
   '都市計画',
   '地目',
@@ -18,7 +17,6 @@ export const DISPLAY_FIELDS = [
   '土地権利'
 ] as const;
 
-/** Defaults mirror the prototype: 市街化調整区域 / 畑 / 接道3m以下 are excluded. */
 export const FILTER_DEFS: FilterDef[] = [
   {
     id: 'toshikeikaku',
@@ -204,7 +202,6 @@ export const FILTER_DEFS: FilterDef[] = [
   }
 ];
 
-/** Section grouping for the settings UI. */
 export const SECTIONS: { title: string; ids: string[] }[] = [
   {
     title: '用途・規制',
@@ -216,43 +213,24 @@ export const SECTIONS: { title: string; ids: string[] }[] = [
   { title: '数値範囲', ids: ['kenpeito', 'yosekiritsu', 'menseki', 'kakaku', 'ekitoho'] }
 ];
 
-/** The only values the count buttons offer, and so the only valid counts. */
 export const COUNT_PRESETS: readonly number[] = [30, 50, 100, 200, 0];
 
-/** How a count is written on its button. Zero is the unbounded「全件」run. */
 export function countLabel(count: number): string {
   return count === 0 ? '全件' : `${count}件`;
 }
 
 export const DEFAULT_TARGET_COUNT = 30;
 
-/**
- * athome's own page-size selector tops out at 50, and larger values are
- * ignored, so this is as many properties as one list request can return.
- */
 export const LIST_PAGE_SIZE = 50;
 
-/**
- * Only a backstop against a search whose hit count could not be read — the
- * real end of a crawl comes from that count. 400 pages is far past the 266
- * that athome's largest land search fills.
- */
 export const MAX_LIST_PAGES = 400;
 
-/** Ceiling on detail fetches for an unbounded「全件」run. */
 export const MAX_DETAIL_FETCHES = 5000;
 
-/**
- * A full crawl walks thousands of pages rather than a few dozen, so the pace
- * matters more than it did: athome starts serving its bot check when requests
- * come too quickly.
- */
 export const DEFAULT_REQUEST_DELAY_MS = 900;
 
-/** Below this the site reliably starts challenging requests. */
 export const MIN_REQUEST_DELAY_MS = 500;
 
-/** How long a cached detail page is trusted before it is read again. */
 export const DEFAULT_DETAIL_MAX_AGE_DAYS = 7;
 
 export function getFilterDef(id: string): FilterDef | undefined {

@@ -1,11 +1,3 @@
-/**
- * What the results page says to the content script.
- *
- * The two run in different origins and only one of them can post to athome, so
- * every favourite registration crosses this boundary. Keeping the shapes in one
- * file means the guard and the sender cannot drift apart.
- */
-
 export const PING = 'agf-ping';
 export const FAVORITE = 'agf-favorite';
 export const UNFAVORITE = 'agf-unfavorite';
@@ -17,11 +9,9 @@ export interface PingMessage {
 
 export interface FavoriteMessage {
   type: typeof FAVORITE | typeof UNFAVORITE;
-  /** The property number, which is athome's BUKKEN. */
   id: string;
 }
 
-/** Asks for athome's own favourite list. Carries nothing else. */
 export interface FavoritesMessage {
   type: typeof FAVORITES;
 }
@@ -36,7 +26,6 @@ export interface FavoriteReply {
   ok: boolean;
   status: number;
   body: string;
-  /** Empty unless the post never reached athome at all. */
   error: string;
 }
 

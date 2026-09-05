@@ -21,9 +21,7 @@
 
   interface Props {
     results: ResultSet;
-    /** The run is still going and these results are still growing. */
     live?: boolean;
-    /** Rendered when the view lives in a dismissable overlay. */
     onclose?: () => void;
   }
 
@@ -34,38 +32,20 @@
   let refilterOpen = $state(false);
   let view = $state<ViewFilter>(emptyViewFilter());
 
-  /**
-   * How many cards get built at once. A whole search runs to thousands, and
-   * putting all of them in the DOM makes scrolling crawl — the worse for a live
-   * run, which would pay that cost again every time the results grow.
-   */
   const PAGE = 300;
   let shown = $state(PAGE);
-  /** Bumped whenever the re-filter changes, which `viewKey` cannot see. */
   let refilterSerial = $state(0);
 
-  /**
-   * Starred properties. They are held here rather than looked up per card so
-   * that the search tabs can drop them: a property that has been decided on is
-   * not something to keep re-reading past.
-   */
   let favorites = $state<Favorite[]>([]);
   let pending = $state<string[]>([]);
-  /** Progress of a bulk registration, or null when none is running. */
   let bulk = $state<{ done: number; total: number; failed: number } | null>(null);
   let stopBulk = false;
 
-  /** athome reads a burst of writes as a robot, so a bulk run paces itself. */
   const BULK_DELAY_MS = 1500;
 
-  /**
-   * Syncing with athome's own list. It only runs on the ★ tab: looking at
-   * search results is not a reason to make athome serve a page.
-   */
   let syncing = $state(false);
   let syncNote = $state('');
   let syncedAt = $state<number | null>(null);
-  /** Stars athome no longer has. Counted, never removed without being asked. */
   let orphans = $state<string[]>([]);
   let syncedOnce = false;
 
@@ -83,19 +63,12 @@
   const favoriteIds = $derived(new Set(favorites.map(entry => entry.id)));
   const idOf = (property: PropertyResult) => detailIdFromUrl(property.url) ?? '';
 
-  /**
-   * Conditions the user has changed since the run. `evaluate` only ever read a
-   * field map and those were all kept, so re-judging every property costs a
-   * pass over an array and nothing else — no crawling, no waiting.
-   */
   let liveFilters = $state<FilterSettings | null>(null);
 
   const judged = $derived(
     liveFilters ? refilter(results.properties, liveFilters) : results.properties
   );
 
-  // Starred properties leave the search tabs entirely. The star is a decision,
-  // and a decided property in the list is just something to scroll past.
   const searchable = $derived(judged.filter(p => !favoriteIds.has(idOf(p))));
 
   const byTab = $derived(
@@ -110,9 +83,6 @@
 
   const visible = $derived(sortProperties(applyViewFilter(byTab, view), SORT_OPTIONS[sortIndex]));
 
-  // Looking at a different set of properties means starting from the top of
-  // it again. A live run growing the same set does not, or the button the user
-  // just pressed would undo itself half a second later.
   const viewKey = $derived(
     [
       tab,
@@ -152,11 +122,6 @@
     return reply.error || `HTTP ${reply.status} ${reply.body}`.trim();
   }
 
-  /**
-   * Writes one entry to both the store and the list. Everything read back out
-   * of `favorites` is a state proxy, and IndexedDB cannot clone a proxy, so the
-   * snapshot is not a nicety — without it every write after the first throws.
-   */
   async function remember(entry: Favorite): Promise<void> {
     const plain = $state.snapshot(entry) as Favorite;
     await putFavorite(plain);
@@ -165,7 +130,6 @@
       : [plain, ...favorites];
   }
 
-  /** Keeps the star and says what went wrong, rather than failing silently. */
   async function fail(entry: Favorite, note: string): Promise<void> {
     console.warn('[AGF]', note);
     await remember({ ...$state.snapshot(entry), remoteNote: note } as Favorite);
@@ -173,11 +137,6 @@
 
   const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-  /**
-   * Stores the star first and posts to athome second. The local copy is the one
-   * the user asked for; whether athome accepted it is worth reporting but not
-   * worth losing the star over.
-   */
   async function star(property: PropertyResult): Promise<void> {
     const id = idOf(property);
     if (!id || favoriteIds.has(id) || pending.includes(id)) return;
@@ -213,18 +172,12 @@
     }
   }
 
-  /**
-   * athome first, then the local copy. The star means「athome にも入っている」,
-   * so dropping it while athome still holds the property would leave the user
-   * with no way to find it again — the failure is kept visible instead.
-   */
   async function unstar(id: string): Promise<void> {
     const entry = favorites.find(f => f.id === id);
     if (!entry || pending.includes(id)) return;
 
     pending = [...pending, id];
     try {
-      // Never registered, so there is nothing on athome's side to remove.
       if (entry.remote === 'ok') {
         const reply = await sendUnfavorite(id, results.searchUrl);
         if (!reply.ok) {
@@ -244,8 +197,6 @@
 
   function toggleStar(property: PropertyResult): void {
     const id = idOf(property);
-    // An unreadable id disables the button rather than reaching here, so this
-    // only fires if that guard is ever wrong — say so instead of doing nothing.
     if (!id) {
       console.warn('[AGF] 物件番号を読み取れません:', property.url);
       return;
@@ -253,11 +204,6 @@
     void (favoriteIds.has(id) ? unstar(id) : star(property));
   }
 
-  /**
-   * Builds a star for a property registered on athome's own site. Whatever a
-   * past crawl saw of it is reused, so an import usually looks like any other
-   * card; when nothing was ever seen, the number is all there is to show.
-   */
   async function importFavorite(id: string): Promise<void> {
     const source = (await getDetail(id)) ?? (await getListing(id));
     await remember({
@@ -280,11 +226,6 @@
     });
   }
 
-  /**
-   * Reads athome's list and takes in what it has. What it no longer has is only
-   * counted: the favourite page's markup and paging are not known well enough
-   * to treat an absence as a deletion without being told to.
-   */
   async function sync(): Promise<void> {
     if (syncing) return;
     syncing = true;
@@ -311,7 +252,6 @@
     }
   }
 
-  /** These are already gone from athome, so nothing is posted — only dropped. */
   async function dropOrphans(): Promise<void> {
     for (const id of orphans) {
       await deleteFavorite(id);
@@ -324,7 +264,6 @@
     syncedAt === null ? '未同期' : `最終同期 ${new Date(syncedAt).toLocaleString('ja-JP')}`
   );
 
-  /** Everything the current tab shows, one at a time and paced. */
   async function starAll(): Promise<void> {
     const targets = visible.filter(p => !favoriteIds.has(idOf(p)));
     if (targets.length === 0 || bulk) return;
@@ -361,11 +300,6 @@
 
   const crawledAt = $derived(new Date(results.timestamp).toLocaleString('ja-JP'));
 
-  /**
-   * Which reading of the list pages the run ended up on. Falling back loses
-   * fields, and with them the chance to rule properties out before their detail
-   * page is opened, so it should not happen quietly.
-   */
   const sourceNote = $derived.by(() => {
     switch (results.source) {
       case 'state':
@@ -379,9 +313,6 @@
     }
   });
 
-  // Only worth saying something when the run ended somewhere other than where
-  // it meant to. Anything but 'target' and 'complete' is worth explaining, and
-  // several of these used to be reported as「検索結果が尽きました」.
   const stopNote = $derived.by(() => {
     if (live) return '';
     switch (results.stoppedBy) {
@@ -421,14 +352,12 @@
           <span class="stat">取得失敗 {results.failed}件</span>
         {/if}
         <span class="stat">確認 {results.inspected}件 / {results.pagesCrawled}ページ</span>
-        <!-- Both are work the run did not have to do, which is the point. -->
         {#if results.skipped}
           <span class="stat">一覧で除外 {results.skipped}件（詳細取得なし）</span>
         {/if}
         {#if results.cached}
           <span class="stat">キャッシュ {results.cached}件</span>
         {/if}
-        <!-- Loose check: results stored before this field existed have none. -->
         {#if results.totalCount != null}
           <span class="stat">検索該当 {results.totalCount.toLocaleString('ja-JP')}件</span>
         {/if}
@@ -455,10 +384,6 @@
     {/if}
   </header>
 
-  <!--
-    Everything below works over results already in hand: no request is made,
-    however the conditions are changed.
-  -->
   <div class="controls">
     {#each tabs as entry (entry.id)}
       <button
@@ -594,11 +519,6 @@
       {/if}
     </div>
 
-    <!--
-      Counted rather than removed. athome's favourite page could have paged past
-      what one sync read, and a star taken away on that guess is not recoverable
-      from here — so the decision stays with the user.
-    -->
     {#if orphans.length}
       <div class="orphans">
         <span>⚠ athome 側にない★が {orphans.length}件あります（athome で解除された可能性）</span>

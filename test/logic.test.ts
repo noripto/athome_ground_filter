@@ -1,8 +1,3 @@
-/**
- * Logic-level checks for the crawl/filter core. Run with `pnpm test`.
- * The defaults asserted here are the ones inherited from the prototype:
- * 市街化調整区域 / 畑 / 接道3m以下 を除外、取得件数 30。
- */
 import { buildPageUrl, canonicalSearchKey, expectedPages } from '../src/lib/crawler';
 import { isFresh } from '../src/lib/db';
 import { favoriteBody, isFavouritable, reconcile, unfavoriteBody } from '../src/lib/favorite';
@@ -50,7 +45,6 @@ function eq(label: string, actual: unknown, expected: unknown): void {
   console.error(`  expected ${e}`);
 }
 
-// ── Pagination ──────────────────────────────────────────────────────────────
 const listUrl = 'https://www.athome.co.jp/tochi/chuko/tokyo/list/?PREFECTURE=13';
 
 eq(
@@ -58,8 +52,6 @@ eq(
   buildPageUrl(listUrl, 1),
   'https://www.athome.co.jp/tochi/chuko/tokyo/list/?PREFECTURE=13&limit=50'
 );
-// athome answers a bare /list/3/ with a 404 — the number needs the `page`
-// prefix. Getting this wrong ended every crawl after its first page.
 eq(
   'page 3 appends athome’s pageN segment',
   buildPageUrl(listUrl, 3),
@@ -77,8 +69,6 @@ eq(
 );
 eq('the page size is overridable', buildPageUrl(listUrl, 1, 30).endsWith('limit=30'), true);
 
-// ── Hit count ───────────────────────────────────────────────────────────────
-// The number is split across spans, so it is read by anchoring on the class.
 const countHtml =
   '<div class="area-top__property">該当物件数' +
   '<span class="area-top__property--number">7,975</span>' +
@@ -92,9 +82,6 @@ eq('a partial last page still counts', expectedPages(51, 50), 2);
 eq('no hits means no pages', expectedPages(0, 50), 0);
 eq('an unknown count gives no page bound', expectedPages(null, 50), null);
 
-// ── Stop reasons ────────────────────────────────────────────────────────────
-// Everything that is not the goal or a cap used to collapse into 'exhausted',
-// which told the user to widen a search that had actually failed.
 const report = (stoppedBy: ListCrawlReport['stoppedBy']): ListCrawlReport => ({
   pagesCrawled: 3,
   totalCount: 7975,
@@ -128,9 +115,6 @@ eq(
   'exhausted'
 );
 
-// ── Search identity ─────────────────────────────────────────────────────────
-// Page five of a search has to key the same as page one, or a second run would
-// remember nothing and pay full price all over again.
 eq(
   'the page segment does not change a search’s identity',
   canonicalSearchKey('https://www.athome.co.jp/tochi/tokyo/list/page5/?PREFECTURE=13&limit=50'),
@@ -155,7 +139,6 @@ eq(
   false
 );
 
-// ── Cache freshness ─────────────────────────────────────────────────────────
 const day = 24 * 60 * 60 * 1000;
 const detail = (fetchedAt: number) => ({
   id: '1',
@@ -177,10 +160,6 @@ eq(
 eq('a detail never read is not fresh', isFresh(undefined, 1000 * day, 7 * day), false);
 eq('a zero age reads everything again', isFresh(detail(1000 * day), 1000 * day + 1, 0), false);
 
-// ── athome's own data ───────────────────────────────────────────────────────
-// One real record, trimmed to the keys the parser reads. It carries 土地権利,
-// 建ぺい率 and 容積率, none of which the rendered card shows — so these filters
-// can be answered without opening a detail page at all.
 const stateFixture =
   '<script id="serverApp-state" type="application/json">' +
   '{"first-view-ITEMS":{"bukkenData":{"bukkenList":[{"bukkenNo":"3918978901",' +
@@ -197,7 +176,6 @@ const fromState = listingsFromState(stateFixture);
 
 eq('the transfer state yields its properties', fromState.length, 1);
 eq('the property id comes from bukkenNo', fromState[0]?.id, '3918978901');
-// urlLong is the agency's page, so the URL has to be built from the id.
 eq(
   'the detail URL is built from the id, not urlLong',
   fromState[0]?.url,
@@ -213,12 +191,9 @@ eq(
   ],
   ['所有権', '40%', '80%']
 );
-// A dash is how athome writes 「none」, and storing it would make a filter read
-// an absent value as a present one.
 eq('a dash is not kept as a value', '私道負担面積' in (fromState[0]?.fields ?? {}), false);
 eq('a page with no state yields nothing', listingsFromState('<html></html>').length, 0);
 
-// The escaped form Angular sometimes inlines has to parse the same way.
 eq(
   'the escaped form parses too',
   listingsFromState(
@@ -229,8 +204,6 @@ eq(
   '123456789'
 );
 
-// ── Results cards ───────────────────────────────────────────────────────────
-// What a card gives up is what a detail page never has to be opened for.
 eq(
   'a property id is read out of its URL',
   detailIdFromUrl('https://www.athome.co.jp/tochi/3918978901/?DOWN=1'),
@@ -254,16 +227,12 @@ eq('a paired label splits into its two fields', splitFieldPair('建ぺい率/容
 eq('an ordinary label is left alone', splitFieldPair('土地面積', '131.30m²～208.08m²'), [
   ['土地面積', '131.30m²～208.08m²']
 ]);
-// Without the count check, 「所在地」with a slash in it would be torn in half.
 eq(
   'a label that does not split evenly is left alone',
   splitFieldPair('所在地', '東京都/八王子市/長房町'),
   [['所在地', '東京都/八王子市/長房町']]
 );
 
-// ── Pre-filtering on the card ───────────────────────────────────────────────
-// A card carries a handful of fields. A filter on any of the others knows
-// nothing yet, and must not read that silence as a failure.
 const cardFields = {
   土地面積: '95.00m²',
   所在地: '東京都八王子市',
@@ -290,9 +259,6 @@ eq(
   }),
   ['土地面積: 95m² < 100']
 );
-// The card prints its price outside the label table, so it has to be put into
-// the field map by hand — without it every property over budget was still
-// getting its detail page opened.
 eq(
   'the card answers the price filter, so no detail page is opened',
   evaluate({ ...strict, kakaku: { enabled: true, min: null, max: 2000 } }, cardFields, {
@@ -308,8 +274,6 @@ eq(
   ['駅徒歩: 25分 > 15']
 );
 
-// ── Bot check ───────────────────────────────────────────────────────────────
-// athome serves its challenge with a 200, so nothing but the body gives it away.
 eq(
   'the interstitial is recognised',
   isChallengeHtml(
@@ -328,7 +292,6 @@ eq(
   false
 );
 
-// ── Retry policy ────────────────────────────────────────────────────────────
 eq('throttling is retried patiently', policyForStatus(429)?.attempts, 5);
 eq('a gateway error is retried', policyForStatus(502)?.attempts, 3);
 eq('a forbidden response waits longest', policyForStatus(403)?.baseMs, 10_000);
@@ -375,9 +338,6 @@ eq(
 eq('no header means no stated wait', retryAfterMs(null), null);
 eq('unparseable headers are ignored', retryAfterMs('soon'), null);
 
-// ── Cancelling mid-wait ─────────────────────────────────────────────────────
-// A backoff waits up to two minutes. A cancellation that has to sit through
-// that is not a cancellation, so the wait itself has to give up.
 const cancelChecks: Promise<void>[] = [];
 
 cancelChecks.push(
@@ -411,15 +371,11 @@ cancelChecks.push(
 
 cancelChecks.push(
   (async () => {
-    // An ordinary wait must still resolve, and must not leave the process
-    // holding an abort listener on a signal it no longer cares about.
     await sleep(5, new AbortController().signal);
     eq('an uncancelled wait resolves', true, true);
   })()
 );
 
-// ── Pacing ──────────────────────────────────────────────────────────────────
-// A challenge slows the whole run down, not just the request that tripped it.
 const pacer = newPacer();
 eq('a fresh run has no penalty', pacer.cooldownMs, 0);
 pacer.penalise();
@@ -449,17 +405,11 @@ eq(
   1300
 );
 
-// ── Inspection ceiling ──────────────────────────────────────────────────────
-// The requested count is a number of *passing* properties, so the crawl needs a
-// separate ceiling on how many detail pages it is willing to open looking for them.
 eq('a small goal still gets a usable budget', inspectLimitFor(5), 200);
 eq('the budget is ten times the goal', inspectLimitFor(30), 300);
 eq('the budget is capped', inspectLimitFor(500), 1200);
 eq('an unbounded run gets the standing ceiling', inspectLimitFor(0), 5000);
 
-// ── Reading athome's figures ────────────────────────────────────────────────
-// Everything the site prints is prose, and reading it naively goes wrong
-// quietly: a leading-number scan turns 「1億500万円」 into 1.
 eq('a plain price', parsePriceMan('1,280万円'), 1280);
 eq('hundreds of millions', parsePriceMan('1億500万円'), 10500);
 eq('a round 億', parsePriceMan('1億円'), 10000);
@@ -479,7 +429,6 @@ eq(
   8
 );
 eq('a bus leg is not a walk', parseWalkMinutes('バス15分 停歩3分 徒歩5分'), 5);
-// athome writes walks as ranges too, which the digits-before-分 reading missed.
 eq(
   'a walk given as a range takes its lower bound',
   parseWalkMinutes('ＪＲ中央線 「西八王子」駅 徒歩25～29分'),
@@ -500,8 +449,6 @@ eq(
 eq('an unknown price yields no unit price', unitPriceManPerTsubo(null, 132.45), null);
 eq('an unknown area yields no unit price', unitPriceManPerTsubo(1280, null), null);
 
-// The regression this fixes: a maximum of 2000万 used to let 1億500万 through,
-// because the value was read as「1」.
 eq(
   'a price over 一億 is excluded by a 2000万 maximum',
   evaluate({ kakaku: { enabled: true, min: null, max: 2000 } }, { 価格: '1億500万円' }).length,
@@ -513,8 +460,6 @@ eq(
   []
 );
 
-// ── Sorting ─────────────────────────────────────────────────────────────────
-// Sorting by cheapest must not open with the ones whose price is unknown.
 const property = (name: string, price: string, area = '', traffic = '') => ({
   url: `https://www.athome.co.jp/tochi/${name}/`,
   passed: true,
@@ -555,7 +500,6 @@ eq(
   ['c', 'a', 'd', 'b']
 );
 
-// ── Narrowing what is already in hand ───────────────────────────────────────
 eq(
   'a keyword matches the address',
   applyViewFilter(listing, { ...emptyViewFilter(), keyword: '八王子' }).length,
@@ -573,7 +517,6 @@ eq(
 );
 eq('no conditions means no narrowing', applyViewFilter(listing, emptyViewFilter()).length, 4);
 
-// ── Re-judging without crawling again ───────────────────────────────────────
 const collected = [
   { ...property('e', '1,000万円'), fields: { 地目: '宅地' }, passed: true, reasons: [] },
   { ...property('f', '1,000万円'), fields: { 地目: '畑' }, passed: true, reasons: [] }
@@ -585,11 +528,9 @@ eq('a property the new conditions reject is excluded', rejudged[1].passed, false
 eq('and it says why', rejudged[1].reasons, ['地目: 畑']);
 eq('the collected fields are left untouched', rejudged[1].fields, { 地目: '畑' });
 
-// ── Field lookup ────────────────────────────────────────────────────────────
 eq('keys match partially', findField({ 接道状況: '南 幅員4.5m' }, '接道'), '南 幅員4.5m');
 eq('missing keys yield an empty string', findField({ 地目: '宅地' }, '価格'), '');
 
-// ── Defaults inherited from the prototype ───────────────────────────────────
 const settings = getDefaultSettings();
 
 eq(
@@ -606,7 +547,6 @@ eq('summary of the defaults', describeActiveFilters(settings.filters), [
   '接道幅（最小）>3m'
 ]);
 
-// ── Evaluation ──────────────────────────────────────────────────────────────
 eq(
   'a clean lot passes',
   evaluate(settings.filters, {
@@ -655,9 +595,6 @@ eq(
   ['上水道: 無（「あり」が必要）']
 );
 
-// The cancellation checks are the only asynchronous ones, so they have to
-// settle before the tally is read.
-// ── athome のお気に入り登録 ──────────────────────────────────────────────
 {
   const body = new URLSearchParams(favoriteBody('3923866001'));
 
@@ -695,7 +632,6 @@ eq(
   eq('組み立てられない番号は投げる前に落ちる', threw, true);
 }
 
-// ── 接道幅 ───────────────────────────────────────────────────────────────
 {
   eq('複数の接道は最も狭いものを採る', narrowestRoadWidth('北 幅員4.0m ／ 東 幅員2.7m'), 2.7);
   eq('接道が1本ならその幅', narrowestRoadWidth('南 幅員6m'), 6);
@@ -703,7 +639,6 @@ eq(
   eq('空文字も null', narrowestRoadWidth(''), null);
 }
 
-// ── athome のお気に入りとの突き合わせ ────────────────────────────────────
 {
   const held = (id: string, remote: 'unsent' | 'ok' | 'failed'): Favorite => ({
     id,
@@ -729,7 +664,6 @@ eq(
   eq('athome にだけあるものを取り込む', toImport.join(','), '1000000009');
   eq('athome から消えた★は外す候補になる', toDrop.join(','), '1000000002');
 
-  // athome に送れていない★は、athome に無くて当たり前。消す理由にならない。
   eq('送信できていない★は候補に入らない', toDrop.includes('1000000003'), false);
 
   const empty = reconcile(local, []);

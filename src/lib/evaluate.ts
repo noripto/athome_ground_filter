@@ -9,10 +9,6 @@ import type {
   RequireContainsState
 } from './types';
 
-/**
- * Detail tables label the same concept slightly differently between listings
- * (「接道状況」 vs 「接道」), so keys are matched by containment either way.
- */
 export function findField(fields: Record<string, string>, key: string): string {
   for (const [k, v] of Object.entries(fields)) {
     if (k.includes(key) || key.includes(k)) return v;
@@ -24,12 +20,6 @@ function parseWidths(raw: string): number[] {
   return [...raw.matchAll(/(\d+(?:\.\d+)?)\s*m/gi)].map(m => Number.parseFloat(m[1]));
 }
 
-/**
- * The narrowest frontage a property states, in metres, or null when it states
- * none. A lot is usually listed against several roads and the narrowest is what
- * decides whether it can be built on, which is why the filter compares that one
- * — and why a card showing anything else would disagree with its own verdict.
- */
 export function narrowestRoadWidth(raw: string): number | null {
   const widths = parseWidths(raw);
   return widths.length > 0 ? Math.min(...widths) : null;
@@ -40,11 +30,6 @@ function parseLeadingNumber(raw: string): number | null {
   return m ? Number.parseFloat(m[1]) : null;
 }
 
-/**
- * Percentages read fine as the first number in the cell, but prices and areas
- * do not: 「1億500万円」 leads with a 1, so a maximum of 2000万 used to let
- * every property over a hundred million straight through.
- */
 function readRangeValue(raw: string, parseAs: NumericRangeDef['parseAs']): number | null {
   if (parseAs === 'price') return parsePriceMan(raw);
   if (parseAs === 'area') return parseAreaSqm(raw);
@@ -53,16 +38,9 @@ function readRangeValue(raw: string, parseAs: NumericRangeDef['parseAs']): numbe
 }
 
 export interface EvaluateOptions {
-  /**
-   * Judge only the filters whose field is actually present. A results card
-   * carries a handful of fields, and a filter looking at one of the others
-   * must not read that absence as a failure — the detail page has yet to be
-   * opened, so nothing is known either way.
-   */
   presentFieldsOnly?: boolean;
 }
 
-/** Returns one reason per failed filter; an empty array means the property passes. */
 export function evaluate(
   filters: FilterSettings,
   fields: Record<string, string>,
@@ -112,7 +90,6 @@ export function evaluate(
   return reasons;
 }
 
-/** Human-readable one-line summary of which filters are currently enabled. */
 export function describeActiveFilters(filters: FilterSettings): string[] {
   const parts: string[] = [];
 

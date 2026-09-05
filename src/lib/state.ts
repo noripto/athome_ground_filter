@@ -1,19 +1,7 @@
-/**
- * Reading athome's own data instead of the page it renders from it.
- *
- * Every list page ships its whole result set as Angular transfer state in a
- * trailing `<script type="application/json">`. That carries more per property
- * than the cards show — 土地権利, 建ぺい率, 容積率, 私道負担 — which means more
- * filters can be answered before any detail page is opened. It also does not
- * depend on class names, so a redesign of the cards does not silently turn the
- * pre-filtering off.
- */
-
 import type { Listing } from './types';
 
 const STATE_RE = /<script[^>]*id="serverApp-state"[^>]*>([\s\S]*?)<\/script>/;
 
-/** Angular escapes a few characters when it inlines the state into the page. */
 const ENTITIES: Record<string, string> = {
   a: '&',
   q: '"',
@@ -31,7 +19,6 @@ function text(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-/** A dash is how athome writes 「none」 in these fields, not a value. */
 function meaningful(value: unknown): string {
   const raw = text(value);
   return raw === '-' || raw === '―' ? '' : raw;
@@ -43,7 +30,6 @@ function record(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-/** The transfer state as a plain object, or null if the page carries none. */
 export function parseTransferState(html: string): Record<string, unknown> | null {
   const match = html.match(STATE_RE);
   if (!match) return null;
@@ -52,9 +38,7 @@ export function parseTransferState(html: string): Record<string, unknown> | null
   for (const candidate of [raw, raw.replace(/&([aqslgn]);/g, (_, c) => ENTITIES[c])]) {
     try {
       return record(JSON.parse(candidate));
-    } catch {
-      // Fall through to the unescaped reading, then give up.
-    }
+    } catch {}
   }
   return null;
 }
@@ -67,10 +51,6 @@ function propertyList(state: Record<string, unknown>): Record<string, unknown>[]
   return list.map(record).filter((entry): entry is Record<string, unknown> => entry !== null);
 }
 
-/**
- * The price is split into 億 and 万 parts, once per end of a range, so it has
- * to be put back together: 「1,650万円」「～」「2,920万円」.
- */
 function readPrice(kakaku: unknown): string {
   const price = record(kakaku);
   if (!price) return '';
@@ -91,7 +71,6 @@ function readPrice(kakaku: unknown): string {
   return written.join(text(price.bufferText) || '～');
 }
 
-/** Every line the property is listed against, as one readable string. */
 function readAccess(access: unknown): string {
   if (!Array.isArray(access)) return '';
   return access
@@ -111,8 +90,6 @@ function toListing(entry: Record<string, unknown>): Listing | null {
   const traffic = readAccess(entry.access);
   const detail = record(entry.propertyDetailData);
 
-  // Keyed the way detail pages label the same things, so one set of filters
-  // reads both without knowing which source it came from.
   const fields: Record<string, string> = {};
   const put = (key: string, value: string) => {
     if (value) fields[key] = value;
@@ -130,7 +107,6 @@ function toListing(entry: Record<string, unknown>): Listing | null {
 
   return {
     id,
-    // `urlLong` on these records is the agency's page, not the property's.
     url: detailUrlFor(id),
     name: text(entry.title) || location,
     price,
@@ -141,7 +117,6 @@ function toListing(entry: Record<string, unknown>): Listing | null {
   };
 }
 
-/** Every property the page's transfer state describes, in its own order. */
 export function listingsFromState(html: string): Listing[] {
   const state = parseTransferState(html);
   if (!state) return [];

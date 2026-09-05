@@ -6,16 +6,11 @@
   interface Props {
     property: PropertyResult;
     maxFields?: number;
-    /** Omitted where starring makes no sense, which hides the button. */
     onfavorite?: () => void;
     favorited?: boolean;
-    /** The registration is in flight, so the button should not fire twice. */
     busy?: boolean;
-    /** False when the property number could not be read out of the URL. */
     favouritable?: boolean;
-    /** Why athome refused this one, when it did. */
     note?: string;
-    /** Set on a starred property, saying which side it was starred from. */
     origin?: 'extension' | 'athome';
   }
 
@@ -36,14 +31,8 @@
       .slice(0, maxFields)
   );
 
-  /**
-   * The frontage filter judges a number the card never showed: 「北 幅員4.0m」
-   * is what gets printed, and 4.0 is what gets compared. Deriving it from the
-   * same helper the filter uses means the two can never disagree.
-   */
   const roadWidth = $derived(narrowestRoadWidth(findField(property.fields, '接道状況')));
 
-  // The name falls back to the address, so only repeat it when it adds something.
   const showLocation = $derived(property.location !== '' && property.location !== property.name);
 </script>
 
@@ -53,7 +42,6 @@
     <span class="badge" class:ok={property.passed}>{property.passed ? '✓ 合致' : '✗ 除外'}</span>
   </div>
   {#if origin === 'athome'}
-    <!-- Nothing judged it, so the ✓ badge above is not a verdict on this one. -->
     <div class="origin">athome 側で登録された物件（条件は未判定）</div>
   {/if}
   {#if note}
@@ -87,11 +75,6 @@
           <dt>{field.key}</dt>
           <dd>{field.value}</dd>
         </div>
-        <!--
-          Sits right after 接道状況 rather than in DISPLAY_FIELDS, because it is
-          read off that field rather than being one of its own — and so it does
-          not eat one of the `maxFields` slots.
-        -->
         {#if field.key === '接道状況' && roadWidth !== null}
           <div class="field">
             <dt>接道幅</dt>
@@ -267,7 +250,7 @@
     gap: 8px;
     margin-top: 10px;
   }
-  /* Both halves are the same control to the eye, so they are one rule. */
+
   .btn {
     flex: 1;
     display: block;

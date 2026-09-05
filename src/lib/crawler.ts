@@ -21,11 +21,6 @@ import {
 import { listingsFromState } from './state';
 import type { Listing, PropertyResult, StopReason } from './types';
 
-/**
- * Rewrites a list URL to point at `page`, keeping the search conditions intact.
- * athome numbers its list pages with a `pageN` path segment — a bare `/list/2/`
- * answers 404, which is what used to end a crawl right after its first page.
- */
 export function buildPageUrl(baseUrl: string, page: number, pageSize = LIST_PAGE_SIZE): string {
   const url = new URL(baseUrl);
   let path = url.pathname.replace(/\/list\/(?:page)?\d+\/?$/, '/list/');
@@ -36,17 +31,8 @@ export function buildPageUrl(baseUrl: string, page: number, pageSize = LIST_PAGE
   return url.toString();
 }
 
-/**
- * Parameters athome adds for its own bookkeeping rather than to describe the
- * search, which would otherwise make the same search look like a new one.
- */
 const INCIDENTAL_PARAMS = ['limit', 'page', 'sref', 'DOWN', 'BKLISTID', 'SEARCHDIV'];
 
-/**
- * The identity of a search, independent of where in it you happen to be. Page
- * five of a search has to key the same as page one, or a resumed run would
- * remember nothing.
- */
 export function canonicalSearchKey(searchUrl: string): string {
   const url = new URL(searchUrl);
   url.pathname = url.pathname.replace(/\/list\/(?:page)?\d+\/?$/, '/list/');
@@ -59,27 +45,17 @@ export function canonicalSearchKey(searchUrl: string): string {
   return url.toString();
 }
 
-/** How many list pages `total` hits fill. Null when the count is unknown. */
 export function expectedPages(total: number | null, pageSize: number): number | null {
   if (total === null || pageSize <= 0) return null;
   return Math.ceil(total / pageSize);
 }
 
-/**
- * Where a list page's properties came from. Each step down loses fields, and
- * with them the chance to rule a property out before opening its detail page,
- * so which one a run ended up on is worth reporting rather than hiding.
- */
 export type ListingSource = 'state' | 'cards' | 'links';
 
-/** What a list crawl learned on the way, and how it ended. */
 export interface ListCrawlReport {
   pagesCrawled: number;
-  /** athome's own hit count for the search, once a page has been read. */
   totalCount: number | null;
-  /** Why the list crawl stopped, or null while it is still running. */
   stoppedBy: StopReason | null;
-  /** The poorest source any page had to fall back to. */
   source: ListingSource | null;
 }
 
@@ -95,12 +71,6 @@ function noteSource(report: ListCrawlReport, source: ListingSource): void {
   }
 }
 
-/**
- * Reads a list page as properties, richest source first. athome's own transfer
- * state carries the most; the rendered cards carry less; a sweep for detail
- * links carries nothing but the URLs, and exists only so a redesign degrades
- * the crawl instead of stopping it.
- */
 function readListPage(
   html: string,
   doc: Document,
@@ -133,25 +103,11 @@ export interface LinkStreamOptions {
   delayMs: number;
   pageSize?: number;
   signal?: AbortSignal;
-  /** Shared with the detail fetches, so one crawl has one pace. */
   pacer?: Pacer;
-  /** Filled in as the crawl runs, so the caller can report how it ended. */
   report: ListCrawlReport;
-  /** Called once per list page read, with the running totals. */
   onPage?: (report: ListCrawlReport, linksSeen: number) => void;
 }
 
-/**
- * Yields unique listings, pulling in the next list page only once the caller
- * has consumed everything found so far. The caller decides when to stop — it
- * knows how many properties actually passed the filters, which is what the
- * requested count refers to.
- *
- * The first page is fetched like any other rather than taken from the tab that
- * started the run: the rendered page carries whatever page size the user had
- * selected, and its markup also holds recommendation panels whose links are not
- * search results at all.
- */
 export async function* streamListings(options: LinkStreamOptions): AsyncGenerator<Listing> {
   const { baseUrl, delayMs, pageSize = LIST_PAGE_SIZE, signal, pacer, report, onPage } = options;
 
@@ -167,9 +123,6 @@ export async function* streamListings(options: LinkStreamOptions): AsyncGenerato
     const outcome = await fetchPage(url, { signal, pacer });
 
     if (outcome.kind !== 'ok') {
-      // Past the last page athome will serve, a page number 404s. Everything
-      // else is a failure the run should own up to rather than report as a
-      // search that ran dry.
       report.stoppedBy =
         outcome.kind === 'notfound'
           ? page > 1
@@ -186,9 +139,6 @@ export async function* streamListings(options: LinkStreamOptions): AsyncGenerato
     const listings = readListPage(outcome.html, outcome.doc, url, report);
     const ids = listings.map(listing => listing.id);
 
-    // athome answers a page number it does not understand by serving page one,
-    // so a page identical to the one before it means paging is broken rather
-    // than that the results ran out.
     if (sameIds(ids, previousIds)) {
       report.stoppedBy = 'paging';
       return;
@@ -218,22 +168,12 @@ export async function* streamListings(options: LinkStreamOptions): AsyncGenerato
   report.stoppedBy = 'limit';
 }
 
-/**
- * The price cell is assembled from separate spans (「1億」「500万円」), so the
- * whitespace between them has to go before it reads as a single amount.
- */
 function readPrice(fields: Record<string, string>): string {
   return findField(fields, '価格').replace(/\s+/g, '');
 }
 
 export type DetailData = Omit<PropertyResult, 'url' | 'passed' | 'reasons'>;
 
-/**
- * Reads one detail page. A missing or broken page is that property's problem
- * and returns null, but a bot check is the whole run's problem: every later
- * fetch would fail the same way, quietly burning through the inspection budget
- * as if the filters were simply strict.
- */
 export async function fetchDetail(
   url: string,
   signal?: AbortSignal,
