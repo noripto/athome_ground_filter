@@ -1,5 +1,7 @@
 import { mount } from 'svelte';
 import Panel from './Panel.svelte';
+import { postFavorite } from '../lib/favorite';
+import { isFavoriteMessage, isPing, type FavoriteReply } from '../lib/messages';
 import '../styles/app.css';
 
 // Replaced at build time by the agf-inline-css plugin in vite.content.config.ts.
@@ -29,4 +31,34 @@ function inject(): void {
   mount(Panel, { target: root });
 }
 
+/**
+ * The results page cannot post to athome itself — its origin is the
+ * extension's, which athome would see as a cross-site write — so it asks this
+ * script to do it. Answering the ping is how it knows this tab is usable.
+ */
+function listen(): void {
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (isPing(message)) {
+      sendResponse({ ok: true });
+      return false;
+    }
+    if (!isFavoriteMessage(message)) return false;
+
+    postFavorite(message.id)
+      .then(outcome => sendResponse({ ...outcome, error: '' } satisfies FavoriteReply))
+      .catch((err: unknown) =>
+        sendResponse({
+          ok: false,
+          status: 0,
+          body: '',
+          error: err instanceof Error ? err.message : String(err)
+        } satisfies FavoriteReply)
+      );
+
+    // Keeps the channel open for the await above.
+    return true;
+  });
+}
+
 inject();
+listen();

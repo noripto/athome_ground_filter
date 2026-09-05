@@ -6,9 +6,23 @@
   interface Props {
     property: PropertyResult;
     maxFields?: number;
+    /** Omitted where starring makes no sense, which hides the button. */
+    onfavorite?: () => void;
+    favorited?: boolean;
+    /** The registration is in flight, so the button should not fire twice. */
+    busy?: boolean;
+    /** Why athome refused this one, when it did. */
+    note?: string;
   }
 
-  let { property, maxFields = 9 }: Props = $props();
+  let {
+    property,
+    maxFields = 9,
+    onfavorite,
+    favorited = false,
+    busy = false,
+    note = ''
+  }: Props = $props();
 
   const shownFields = $derived(
     DISPLAY_FIELDS.map(key => ({ key, value: findField(property.fields, key) }))
@@ -23,8 +37,22 @@
 <article class="card" class:ok={property.passed} class:ng={!property.passed}>
   <div class="top">
     <h3 class="name">{property.name || '物件名不明'}</h3>
+    {#if onfavorite}
+      <button
+        type="button"
+        class="star"
+        class:on={favorited}
+        disabled={busy}
+        title={favorited ? 'お気に入りから外す' : 'お気に入りに入れて検索結果から外す'}
+        aria-pressed={favorited}
+        onclick={onfavorite}>{busy ? '…' : favorited ? '★' : '☆'}</button
+      >
+    {/if}
     <span class="badge" class:ok={property.passed}>{property.passed ? '✓ 合致' : '✗ 除外'}</span>
   </div>
+  {#if note}
+    <div class="note">{note}</div>
+  {/if}
 
   <dl class="headline">
     <div class="line">
@@ -103,6 +131,30 @@
     line-height: 1.5;
     color: var(--agf-text);
     word-break: break-word;
+  }
+  .star {
+    border: none;
+    background: none;
+    cursor: pointer;
+    padding: 0 2px;
+    font-size: 19px;
+    line-height: 1;
+    color: var(--agf-faint);
+    flex-shrink: 0;
+  }
+  .star.on {
+    color: #e8a317;
+  }
+  .star:hover:not(:disabled) {
+    color: #e8a317;
+  }
+  .star:disabled {
+    cursor: progress;
+  }
+  .note {
+    font-size: 11px;
+    color: var(--agf-accent);
+    line-height: 1.6;
   }
   .badge {
     padding: 2px 10px;

@@ -12,14 +12,15 @@
  * extension has no runtime dependencies and this needs three stores.
  */
 
-import type { Detail, Listing, SearchRecord } from './types';
+import type { Detail, Favorite, Listing, SearchRecord } from './types';
 
 const DB_NAME = 'agf';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 const LISTINGS = 'listings';
 const DETAILS = 'details';
 const SEARCHES = 'searches';
+const FAVORITES = 'favorites';
 
 /** How long a stored detail page is trusted before it is read again. */
 export const DETAIL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -40,6 +41,11 @@ export function openDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(SEARCHES)) {
         db.createObjectStore(SEARCHES, { keyPath: 'searchKey' });
+      }
+      // Added in version 2. Every branch here is guarded, so a database made by
+      // either version upgrades to this one without losing what it holds.
+      if (!db.objectStoreNames.contains(FAVORITES)) {
+        db.createObjectStore(FAVORITES, { keyPath: 'id' }).createIndex('addedAt', 'addedAt');
       }
     };
 
@@ -95,7 +101,23 @@ export function putSearch(record: SearchRecord): Promise<unknown> {
   return run(SEARCHES, 'readwrite', store => store.put(record));
 }
 
-/** Clears everything the crawl remembers, so the next run pays full price. */
+export function listFavorites(): Promise<Favorite[]> {
+  return run<Favorite[]>(FAVORITES, 'readonly', store => store.getAll());
+}
+
+export function putFavorite(favorite: Favorite): Promise<unknown> {
+  return run(FAVORITES, 'readwrite', store => store.put(favorite));
+}
+
+export function deleteFavorite(id: string): Promise<unknown> {
+  return run(FAVORITES, 'readwrite', store => store.delete(id));
+}
+
+/**
+ * Clears everything the crawl remembers, so the next run pays full price.
+ * Favourites are deliberately not in the list: they are the user's own marks,
+ * not something the crawl can read again.
+ */
 export async function clearCache(): Promise<void> {
   const db = await openDb();
   await Promise.all(

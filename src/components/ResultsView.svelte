@@ -10,9 +10,13 @@
     sortProperties,
     type ViewFilter
   } from '../lib/view';
-  import type { FilterSettings, ResultSet, Settings } from '../lib/types';
+  import { sendFavorite } from '../lib/athome-tab';
+  import { deleteFavorite, listFavorites, putFavorite } from '../lib/db';
+  import { isFavouritable } from '../lib/favorite';
+  import { detailIdFromUrl } from '../lib/markup';
+  import type { Favorite, FilterSettings, PropertyResult, ResultSet, Settings } from '../lib/types';
 
-  type Tab = 'ok' | 'ng' | 'all';
+  type Tab = 'ok' | 'ng' | 'all' | 'fav';
 
   interface Props {
     results: ResultSet;
@@ -40,6 +44,27 @@
   let refilterSerial = $state(0);
 
   /**
+   * Starred properties. They are held here rather than looked up per card so
+   * that the search tabs can drop them: a property that has been decided on is
+   * not something to keep re-reading past.
+   */
+  let favorites = $state<Favorite[]>([]);
+  let pending = $state<string[]>([]);
+  /** Progress of a bulk registration, or null when none is running. */
+  let bulk = $state<{ done: number; total: number; failed: number } | null>(null);
+  let stopBulk = false;
+
+  /** athome reads a burst of writes as a robot, so a bulk run paces itself. */
+  const BULK_DELAY_MS = 1500;
+
+  listFavorites().then(stored => {
+    favorites = stored.sort((a, b) => b.addedAt - a.addedAt);
+  });
+
+  const favoriteIds = $derived(new Set(favorites.map(entry => entry.id)));
+  const idOf = (property: PropertyResult) => detailIdFromUrl(property.url) ?? '';
+
+  /**
    * Conditions the user has changed since the run. `evaluate` only ever read a
    * field map and those were all kept, so re-judging every property costs a
    * pass over an array and nothing else — no crawling, no waiting.
@@ -50,12 +75,18 @@
     liveFilters ? refilter(results.properties, liveFilters) : results.properties
   );
 
+  // Starred properties leave the search tabs entirely. The star is a decision,
+  // and a decided property in the list is just something to scroll past.
+  const searchable = $derived(judged.filter(p => !favoriteIds.has(idOf(p))));
+
   const byTab = $derived(
-    tab === 'ok'
-      ? judged.filter(p => p.passed)
-      : tab === 'ng'
-        ? judged.filter(p => !p.passed)
-        : judged
+    tab === 'fav'
+      ? favorites.map(entry => entry.property)
+      : tab === 'ok'
+        ? searchable.filter(p => p.passed)
+        : tab === 'ng'
+          ? searchable.filter(p => !p.passed)
+          : searchable
   );
 
   const visible = $derived(sortProperties(applyViewFilter(byTab, view), SORT_OPTIONS[sortIndex]));
@@ -87,11 +118,96 @@
   const narrowed = $derived(isViewFilterActive(view) || liveFilters !== null);
   const passedNow = $derived(judged.filter(p => p.passed).length);
 
-  const tabs: { id: Tab; label: string }[] = [
+  const tabs = $derived<{ id: Tab; label: string }[]>([
     { id: 'ok', label: '合致のみ' },
     { id: 'ng', label: '除外のみ' },
-    { id: 'all', label: '全件' }
-  ];
+    { id: 'all', label: '全件' },
+    { id: 'fav', label: `★ お気に入り${favorites.length ? ` ${favorites.length}` : ''}` }
+  ]);
+
+  function noteFor(id: string): string {
+    const entry = favorites.find(f => f.id === id);
+    return entry && entry.remote === 'failed' ? `⚠ athome への登録に失敗: ${entry.remoteNote}` : '';
+  }
+
+  const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+  /**
+   * Stores the star first and posts to athome second. The local copy is the one
+   * the user asked for; whether athome accepted it is worth reporting but not
+   * worth losing the star over.
+   */
+  async function star(property: PropertyResult): Promise<void> {
+    const id = idOf(property);
+    if (!id || favoriteIds.has(id) || pending.includes(id)) return;
+
+    pending = [...pending, id];
+    const entry: Favorite = {
+      id,
+      addedAt: Date.now(),
+      property: $state.snapshot(property) as PropertyResult,
+      remote: 'unsent',
+      remoteNote: ''
+    };
+
+    try {
+      await putFavorite(entry);
+      favorites = [entry, ...favorites];
+
+      if (isFavouritable(id)) {
+        const reply = await sendFavorite(id, results.searchUrl);
+        entry.remote = reply.ok ? 'ok' : 'failed';
+        entry.remoteNote = reply.ok ? '' : reply.error || `HTTP ${reply.status} ${reply.body}`;
+      } else {
+        entry.remote = 'failed';
+        entry.remoteNote = '物件番号を読み取れませんでした';
+      }
+
+      await putFavorite(entry);
+      favorites = favorites.map(f => (f.id === id ? entry : f));
+    } finally {
+      pending = pending.filter(other => other !== id);
+    }
+  }
+
+  /**
+   * Local only. athome's own removal request has not been observed yet, so the
+   * star goes but whatever is on athome stays — said plainly rather than
+   * guessed at, because guessing means posting an unknown write.
+   */
+  async function unstar(id: string): Promise<void> {
+    await deleteFavorite(id);
+    favorites = favorites.filter(entry => entry.id !== id);
+  }
+
+  function toggleStar(property: PropertyResult): void {
+    const id = idOf(property);
+    if (!id) return;
+    void (favoriteIds.has(id) ? unstar(id) : star(property));
+  }
+
+  /** Everything the current tab shows, one at a time and paced. */
+  async function starAll(): Promise<void> {
+    const targets = visible.filter(p => !favoriteIds.has(idOf(p)));
+    if (targets.length === 0 || bulk) return;
+
+    stopBulk = false;
+    bulk = { done: 0, total: targets.length, failed: 0 };
+
+    for (const property of targets) {
+      if (stopBulk) break;
+      await star(property);
+      const entry = favorites.find(f => f.id === idOf(property));
+      bulk = {
+        done: bulk.done + 1,
+        total: bulk.total,
+        failed: bulk.failed + (entry?.remote === 'failed' ? 1 : 0)
+      };
+      if (!stopBulk) await wait(BULK_DELAY_MS);
+    }
+
+    bulk = null;
+  }
 
   function applyFilters(next: Settings) {
     liveFilters = next.filters;
@@ -233,6 +349,19 @@
       🔎 条件を変えて絞り込む
     </button>
 
+    {#if bulk}
+      <span class="bulk">
+        ★ 登録中 {bulk.done} / {bulk.total}件{bulk.failed ? `（失敗 ${bulk.failed}件）` : ''}
+      </span>
+      <button type="button" class="agf-btn agf-btn-stop" onclick={() => (stopBulk = true)}>
+        ■ 中断
+      </button>
+    {:else if tab !== 'fav' && visible.length > 0}
+      <button type="button" class="agf-btn agf-btn-secondary" onclick={starAll}>
+        ★ 表示中の {visible.length}件を登録
+      </button>
+    {/if}
+
     <span class="count">
       {rendered.length}/{visible.length}件表示{narrowed ? `（合致 ${passedNow}件）` : ''}
     </span>
@@ -316,13 +445,35 @@
     </div>
   {/if}
 
+  {#if tab === 'fav'}
+    <!--
+      athome's own removal request has not been observed, so unstarring is
+      local. Saying so beats sending a guessed-at write to somebody's account.
+    -->
+    <p class="hint">
+      ★ を押し直すと拡張のお気に入りからは消えますが、athome 側の登録は残ります（解除は athome
+      のサイトで行ってください）。
+    </p>
+  {/if}
+
   <div class="main">
-    {#if visible.length === 0}
+    {#if tab === 'fav' && visible.length === 0}
+      <p class="empty">
+        まだお気に入りがありません。<br />
+        カードの ☆ を押すと、athome のお気に入りに登録してこの検索結果から外します。
+      </p>
+    {:else if visible.length === 0}
       <p class="empty">該当する物件がありません。</p>
     {:else}
       <div class="grid">
         {#each rendered as property (property.url)}
-          <ResultCard {property} />
+          <ResultCard
+            {property}
+            favorited={favoriteIds.has(idOf(property))}
+            busy={pending.includes(idOf(property))}
+            note={noteFor(idOf(property))}
+            onfavorite={() => toggleStar(property)}
+          />
         {/each}
       </div>
       {#if remaining > 0}
@@ -456,6 +607,11 @@
   .tab:hover:not(.active) {
     background: #eee;
   }
+  .bulk {
+    margin-left: auto;
+    font-size: 12px;
+    color: #555;
+  }
   .count {
     margin-left: auto;
     font-size: 11px;
@@ -473,6 +629,14 @@
     display: flex;
     justify-content: center;
     padding: 24px 0 4px;
+  }
+  .hint {
+    margin: 0;
+    padding: 8px 20px;
+    background: var(--agf-ok-soft);
+    border-bottom: 1px solid var(--agf-border);
+    font-size: 11px;
+    color: #555;
   }
   .empty {
     color: var(--agf-muted);

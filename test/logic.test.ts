@@ -5,6 +5,7 @@
  */
 import { buildPageUrl, canonicalSearchKey, expectedPages } from '../src/lib/crawler';
 import { isFresh } from '../src/lib/db';
+import { favoriteBody, isFavouritable } from '../src/lib/favorite';
 import {
   parseAreaSqm,
   parsePriceMan,
@@ -650,6 +651,34 @@ eq(
 
 // The cancellation checks are the only asynchronous ones, so they have to
 // settle before the tally is read.
+// ── athome のお気に入り登録 ──────────────────────────────────────────────
+{
+  const body = new URLSearchParams(favoriteBody('3923866001'));
+
+  eq('物件番号がそのまま BUKKEN になる', body.get('BUKKEN'), '3923866001');
+  eq('BUKKEN_ART は番号と ART の連結', body.get('BUKKEN_ART'), '3923866001_14');
+  eq('土地の ITEM は固定', body.get('ITEM'), 'ks');
+  eq('土地の ART は固定', body.get('ART'), '14');
+  eq('SITECD は本体サイト', body.get('SITECD'), '00000');
+  eq(
+    'athome 自身の並び順で送る',
+    favoriteBody('3923866001'),
+    'SITECD=00000&ITEM=ks&ART=14&BUKKEN=3923866001&BUKKEN_ART=3923866001_14&sref=list_simple'
+  );
+
+  eq('物件番号でないものは弾く', isFavouritable('ks14392386'), false);
+  eq('空文字も弾く', isFavouritable(''), false);
+  eq('数字の物件番号は通る', isFavouritable('3923866001'), true);
+
+  let threw = false;
+  try {
+    favoriteBody('nonsense');
+  } catch {
+    threw = true;
+  }
+  eq('組み立てられない番号は投げる前に落ちる', threw, true);
+}
+
 await Promise.all(cancelChecks);
 
 console.log(failures ? `${failures} 件失敗しました` : 'すべて成功しました');

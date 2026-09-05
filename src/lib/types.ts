@@ -150,6 +150,24 @@ export interface PropertyResult {
   fields: Record<string, string>;
 }
 
+/** Whether athome's own favourite list has this property too. */
+export type RemoteState = 'unsent' | 'ok' | 'failed';
+
+/**
+ * A starred property. It keeps a copy of the result rather than a reference to
+ * one, so a star survives clearing the cache, a re-run that no longer turns the
+ * property up, and the listing being taken off athome altogether.
+ */
+export interface Favorite {
+  /** The property number — `Listing.id`, and athome's own BUKKEN. */
+  id: string;
+  addedAt: number;
+  property: PropertyResult;
+  remote: RemoteState;
+  /** Why athome refused, when it did. Shown so a failure is not a mystery. */
+  remoteNote: string;
+}
+
 /**
  * Why the crawl stopped. `exhausted` used to stand in for every ending that
  * wasn't the goal or a cap, which hid real failures behind a message telling
