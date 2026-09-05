@@ -63,6 +63,7 @@ export interface Settings {
   requestDelayMs: number;
   detailMaxAgeDays: number;
   keepExcluded: boolean;
+  narrowOnAthome: boolean;
   filters: FilterSettings;
 }
 
@@ -142,5 +143,7 @@ export interface ResultSet {
   inspectLimit: number;
   activeFilters: string[];
   source?: 'state' | 'cards' | 'links' | null;
+  narrowedBy?: string[];
+  countBefore?: number | null;
   properties: PropertyResult[];
 }

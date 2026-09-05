@@ -11,12 +11,6 @@
 
   const activeFilters = $derived(settings ? describeActiveFilters(settings.filters) : []);
 
-  const hitCount = $derived.by(() => {
-    const text = document.querySelector('.area-top__property--number')?.textContent ?? '';
-    const count = Number.parseInt(text.replace(/,/g, ''), 10);
-    return Number.isFinite(count) ? count : null;
-  });
-
   loadSettings().then(loaded => {
     settings = loaded;
   });
@@ -57,10 +51,6 @@
     {#if !settings}
       <p class="loading">読み込み中…</p>
     {:else}
-      {#if hitCount !== null}
-        <div class="hits">この検索の該当物件数 <b>{hitCount.toLocaleString('ja-JP')}</b> 件</div>
-      {/if}
-
       <div class="count" title="除外された物件はこの件数に含まれません">合致件数</div>
       <div class="presets">
         {#each COUNT_PRESETS as preset (preset)}
@@ -146,18 +136,6 @@
     margin: 0;
     font-size: 12px;
     color: var(--agf-muted);
-  }
-  .hits {
-    font-size: 12px;
-    color: #555;
-    background: #f4f6f7;
-    border-radius: 5px;
-    padding: 5px 8px;
-    margin-bottom: 8px;
-  }
-  .hits b {
-    color: var(--agf-accent);
-    font-size: 14px;
   }
   .count {
     font-size: 12px;

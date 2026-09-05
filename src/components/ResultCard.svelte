@@ -33,6 +33,15 @@
 
   const roadWidth = $derived(narrowestRoadWidth(findField(property.fields, '接道状況')));
 
+  function openDetail(event: MouseEvent): void {
+    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
+      return;
+    }
+    if (typeof chrome === 'undefined' || !chrome.tabs?.create) return;
+    event.preventDefault();
+    void chrome.tabs.create({ url: property.url });
+  }
+
   const showLocation = $derived(property.location !== '' && property.location !== property.name);
 </script>
 
@@ -94,7 +103,13 @@
   {/if}
 
   <div class="actions">
-    <a class="btn detail" href={property.url} target="_blank" rel="noopener noreferrer">
+    <a
+      class="btn detail"
+      href={property.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      onclick={openDetail}
+    >
       詳細を見る →
     </a>
     {#if onfavorite}

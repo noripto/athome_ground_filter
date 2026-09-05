@@ -359,7 +359,11 @@
           <span class="stat">キャッシュ {results.cached}件</span>
         {/if}
         {#if results.totalCount != null}
-          <span class="stat">検索該当 {results.totalCount.toLocaleString('ja-JP')}件</span>
+          <span class="stat">
+            検索該当 {#if results.countBefore != null && results.countBefore !== results.totalCount}
+              {results.countBefore.toLocaleString('ja-JP')} →
+            {/if}{results.totalCount.toLocaleString('ja-JP')}件
+          </span>
         {/if}
       </div>
       {#if stopNote}
@@ -372,6 +376,9 @@
       {/if}
       {#if sourceNote}
         <div class="meta" class:warn={results.source !== 'state'}>{sourceNote}</div>
+      {/if}
+      {#if results.narrowedBy?.length}
+        <div class="meta">athome 側で絞り込み: {results.narrowedBy.join(' ／ ')}</div>
       {/if}
       {#if results.activeFilters.length}
         <div class="meta">適用条件: {results.activeFilters.join(' ／ ')}</div>

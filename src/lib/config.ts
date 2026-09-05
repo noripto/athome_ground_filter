@@ -264,6 +264,7 @@ export function getDefaultSettings(): Settings {
     requestDelayMs: DEFAULT_REQUEST_DELAY_MS,
     detailMaxAgeDays: DEFAULT_DETAIL_MAX_AGE_DAYS,
     keepExcluded: true,
+    narrowOnAthome: true,
     filters: getDefaultFilters()
   };
 }

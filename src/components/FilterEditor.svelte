@@ -172,6 +172,15 @@
           <input type="checkbox" bind:checked={settings.keepExcluded} />
           除外された物件も結果に残す（除外理由つき）
         </label>
+        <label class="crawl-check">
+          <input type="checkbox" bind:checked={settings.narrowOnAthome} />
+          athome 側でも絞り込む（価格・土地面積・駅徒歩）
+        </label>
+        <div class="crawl-help">
+          athome
+          の検索条件に反映できるものは反映してから巡回します。読むページ数がそのぶん減ります。athome
+          側に既に入っている条件より緩くなることはありません。
+        </div>
       </div>
 
       {#each SECTIONS as section (section.title)}
