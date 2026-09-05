@@ -9,7 +9,14 @@
  * on athome.co.jp, which is what the content script is for.
  */
 
+import { isChallengeHtml } from './fetcher';
+import { detailIdFromUrl, extractDetailLinks } from './markup';
+import type { Favorite } from './types';
+
 export const FAVORITE_URL = 'https://www.athome.co.jp/simple_favorite/regist';
+
+/** The page athome shows its own favourite list on. */
+export const FAVORITE_LIST_URL = 'https://www.athome.co.jp/personal/favorite/';
 
 /** Removal is a different endpoint, and a different shape, from registration. */
 export const UNFAVORITE_URL = 'https://www.athome.co.jp/personal/favoriteajax/';
@@ -77,6 +84,118 @@ export function unfavoriteBody(id: string): string {
     BUKKEN: id,
     ITEMART: `${ITEM}${ART}`
   }).toString();
+}
+
+/** How many pages of the favourite list one sync will walk. */
+const MAX_LIST_PAGES = 10;
+
+export interface FavoriteList {
+  ok: boolean;
+  ids: string[];
+  /** Always worth saying: on failure it is the reason, on success the extent. */
+  note: string;
+}
+
+/** Anything that means the page is not the logged-in favourite list. */
+function refuse(note: string): FavoriteList {
+  return { ok: false, ids: [], note };
+}
+
+/**
+ * The property numbers on one page of the favourite list. `DETAIL_URL_RE` only
+ * matches /tochi/ URLs, so the other categories' tabs are skipped without this
+ * having to know which tab it is looking at.
+ */
+function idsOnPage(html: string, url: string): string[] {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  return extractDetailLinks(doc, url)
+    .map(detailIdFromUrl)
+    .filter((id): id is string => id !== null);
+}
+
+/**
+ * Links to further pages of the same list. The markup here has not been seen,
+ * so this looks for the one thing that must be true of a paging link — it
+ * points back at the favourite page — rather than for a class name.
+ */
+function furtherPages(html: string, url: string): string[] {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const pages = new Set<string>();
+
+  for (const anchor of doc.querySelectorAll<HTMLAnchorElement>('a[href]')) {
+    const href = new URL(anchor.getAttribute('href') ?? '', url).toString();
+    if (!href.startsWith(FAVORITE_LIST_URL) || href === url) continue;
+    if (!/[?&](PAGE|page|p)=\d+/.test(href)) continue;
+    pages.add(href);
+  }
+
+  return [...pages];
+}
+
+/**
+ * Every land property on athome's own favourite list.
+ *
+ * Must run in a page on athome.co.jp, like the registration. It refuses rather
+ * than guesses whenever the answer is not recognisably the list — a caller that
+ * removes local stars on what this returns would otherwise throw them away the
+ * first time the session expires or the bot check fires.
+ */
+export async function fetchFavoriteIds(): Promise<FavoriteList> {
+  const seen = new Set<string>();
+  const queue = [`${FAVORITE_LIST_URL}?TAB_CODE=${TAB_CODE}&SORT=${TAB_SORT}`];
+  const read: string[] = [];
+
+  while (queue.length > 0 && read.length < MAX_LIST_PAGES) {
+    const url = queue.shift() as string;
+    if (read.includes(url)) continue;
+
+    let res: Response;
+    try {
+      res = await fetch(url, { credentials: 'include' });
+    } catch (err) {
+      return refuse(
+        `お気に入りページを読めませんでした: ${err instanceof Error ? err.message : err}`
+      );
+    }
+
+    if (!res.ok) return refuse(`お気に入りページが HTTP ${res.status} を返しました`);
+    // A redirect away from the favourite page is athome asking for a login.
+    if (!res.url.startsWith(FAVORITE_LIST_URL)) {
+      return refuse('athome にログインしていません（サイトでログインしてから再同期してください）');
+    }
+
+    const html = await res.text();
+    if (isChallengeHtml(html))
+      return refuse('athome のアクセス制限に掛かりました（時間を空けてください）');
+
+    read.push(url);
+    for (const id of idsOnPage(html, res.url)) seen.add(id);
+    for (const next of furtherPages(html, res.url)) {
+      if (!read.includes(next) && !queue.includes(next)) queue.push(next);
+    }
+  }
+
+  const more = queue.length > 0 ? `（${MAX_LIST_PAGES}ページで打ち切り）` : '';
+  return { ok: true, ids: [...seen], note: `${read.length}ページ / 土地 ${seen.size}件${more}` };
+}
+
+/**
+ * What one sync should change, worked out without touching anything. Removals
+ * only ever concern stars athome was actually told about: one that never got
+ * there is absent from athome's list for a reason that has nothing to do with
+ * the user having removed it.
+ */
+export function reconcile(
+  local: readonly Favorite[],
+  remoteIds: readonly string[]
+): { toImport: string[]; toDrop: string[] } {
+  const remote = new Set(remoteIds);
+  const held = new Set(local.map(entry => entry.id));
+
+  return {
+    toImport: [...remote].filter(id => !held.has(id)),
+    toDrop: local.filter(entry => entry.remote === 'ok' && !remote.has(entry.id)).map(e => e.id)
+  };
 }
 
 export interface FavoriteOutcome {

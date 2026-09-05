@@ -5,7 +5,7 @@
  */
 import { buildPageUrl, canonicalSearchKey, expectedPages } from '../src/lib/crawler';
 import { isFresh } from '../src/lib/db';
-import { favoriteBody, isFavouritable, unfavoriteBody } from '../src/lib/favorite';
+import { favoriteBody, isFavouritable, reconcile, unfavoriteBody } from '../src/lib/favorite';
 import {
   parseAreaSqm,
   parsePriceMan,
@@ -15,7 +15,12 @@ import {
 import { applyViewFilter, emptyViewFilter, refilter, sortProperties } from '../src/lib/view';
 import { detailIdFromUrl, parseTotalCount, splitFieldPair } from '../src/lib/markup';
 import { listingsFromState } from '../src/lib/state';
-import { describeActiveFilters, evaluate, findField } from '../src/lib/evaluate';
+import {
+  describeActiveFilters,
+  evaluate,
+  findField,
+  narrowestRoadWidth
+} from '../src/lib/evaluate';
 import { getDefaultSettings, LIST_PAGE_SIZE } from '../src/lib/config';
 import { inspectLimitFor, resolveStopReason } from '../src/lib/run';
 import {
@@ -28,6 +33,7 @@ import {
   sleep
 } from '../src/lib/fetcher';
 import type { ListCrawlReport } from '../src/lib/crawler';
+import type { Favorite } from '../src/lib/types';
 
 let failures = 0;
 
@@ -687,6 +693,48 @@ eq(
     threw = true;
   }
   eq('組み立てられない番号は投げる前に落ちる', threw, true);
+}
+
+// ── 接道幅 ───────────────────────────────────────────────────────────────
+{
+  eq('複数の接道は最も狭いものを採る', narrowestRoadWidth('北 幅員4.0m ／ 東 幅員2.7m'), 2.7);
+  eq('接道が1本ならその幅', narrowestRoadWidth('南 幅員6m'), 6);
+  eq('幅の記載が無ければ null', narrowestRoadWidth('私道'), null);
+  eq('空文字も null', narrowestRoadWidth(''), null);
+}
+
+// ── athome のお気に入りとの突き合わせ ────────────────────────────────────
+{
+  const held = (id: string, remote: 'unsent' | 'ok' | 'failed'): Favorite => ({
+    id,
+    addedAt: 0,
+    property: {
+      url: `https://www.athome.co.jp/tochi/${id}/`,
+      passed: true,
+      reasons: [],
+      name: '',
+      price: '',
+      area: '',
+      location: '',
+      traffic: '',
+      fields: {}
+    },
+    remote,
+    remoteNote: ''
+  });
+
+  const local = [held('1000000001', 'ok'), held('1000000002', 'ok'), held('1000000003', 'failed')];
+  const { toImport, toDrop } = reconcile(local, ['1000000001', '1000000009']);
+
+  eq('athome にだけあるものを取り込む', toImport.join(','), '1000000009');
+  eq('athome から消えた★は外す候補になる', toDrop.join(','), '1000000002');
+
+  // athome に送れていない★は、athome に無くて当たり前。消す理由にならない。
+  eq('送信できていない★は候補に入らない', toDrop.includes('1000000003'), false);
+
+  const empty = reconcile(local, []);
+  eq('空のリストでも送信済みのものだけが候補', empty.toDrop.join(','), '1000000001,1000000002');
+  eq('空のリストなら取り込むものは無い', empty.toImport.length, 0);
 }
 
 await Promise.all(cancelChecks);

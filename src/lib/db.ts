@@ -93,6 +93,17 @@ export function putListing(listing: Listing & { seenAt: number }): Promise<unkno
   return run(LISTINGS, 'readwrite', store => store.put(listing));
 }
 
+/**
+ * What a past crawl saw of a property from the list pages alone. Poorer than a
+ * detail page but enough to name and price a star that was registered on
+ * athome's own site rather than here.
+ */
+export function getListing(id: string): Promise<(Listing & { seenAt: number }) | undefined> {
+  return run<(Listing & { seenAt: number }) | undefined>(LISTINGS, 'readonly', store =>
+    store.get(id)
+  );
+}
+
 export function getSearch(searchKey: string): Promise<SearchRecord | undefined> {
   return run<SearchRecord | undefined>(SEARCHES, 'readonly', store => store.get(searchKey));
 }

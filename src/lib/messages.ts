@@ -9,6 +9,7 @@
 export const PING = 'agf-ping';
 export const FAVORITE = 'agf-favorite';
 export const UNFAVORITE = 'agf-unfavorite';
+export const FAVORITES = 'agf-favorites';
 
 export interface PingMessage {
   type: typeof PING;
@@ -20,7 +21,12 @@ export interface FavoriteMessage {
   id: string;
 }
 
-export type Message = PingMessage | FavoriteMessage;
+/** Asks for athome's own favourite list. Carries nothing else. */
+export interface FavoritesMessage {
+  type: typeof FAVORITES;
+}
+
+export type Message = PingMessage | FavoriteMessage | FavoritesMessage;
 
 export interface PingReply {
   ok: true;
@@ -40,6 +46,10 @@ function tagged(value: unknown): value is { type: unknown } {
 
 export function isPing(value: unknown): value is PingMessage {
   return tagged(value) && value.type === PING;
+}
+
+export function isFavoritesMessage(value: unknown): value is FavoritesMessage {
+  return tagged(value) && value.type === FAVORITES;
 }
 
 export function isFavoriteMessage(value: unknown): value is FavoriteMessage {

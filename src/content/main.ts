@@ -1,7 +1,13 @@
 import { mount } from 'svelte';
 import Panel from './Panel.svelte';
-import { postFavorite, postUnfavorite } from '../lib/favorite';
-import { FAVORITE, isFavoriteMessage, isPing, type FavoriteReply } from '../lib/messages';
+import { fetchFavoriteIds, postFavorite, postUnfavorite } from '../lib/favorite';
+import {
+  FAVORITE,
+  isFavoriteMessage,
+  isFavoritesMessage,
+  isPing,
+  type FavoriteReply
+} from '../lib/messages';
 import '../styles/app.css';
 
 // Replaced at build time by the agf-inline-css plugin in vite.content.config.ts.
@@ -42,6 +48,19 @@ function listen(): void {
       sendResponse({ ok: true });
       return false;
     }
+    if (isFavoritesMessage(message)) {
+      fetchFavoriteIds()
+        .then(sendResponse)
+        .catch((err: unknown) =>
+          sendResponse({
+            ok: false,
+            ids: [],
+            note: err instanceof Error ? err.message : String(err)
+          })
+        );
+      return true;
+    }
+
     if (!isFavoriteMessage(message)) return false;
 
     const post = message.type === FAVORITE ? postFavorite : postUnfavorite;

@@ -7,7 +7,8 @@
  * the answer for the rest of the session.
  */
 
-import { FAVORITE, PING, UNFAVORITE, type FavoriteReply } from './messages';
+import type { FavoriteList } from './favorite';
+import { FAVORITE, FAVORITES, PING, UNFAVORITE, type FavoriteReply } from './messages';
 
 /** Must stay in step with `content_scripts.matches` in the manifest. */
 const CONTENT_SCRIPT_MATCH = 'https://www.athome.co.jp/tochi/*/list/*';
@@ -122,4 +123,27 @@ export function sendFavorite(id: string, searchUrl: string): Promise<FavoriteRep
 
 export function sendUnfavorite(id: string, searchUrl: string): Promise<FavoriteReply> {
   return send(UNFAVORITE, id, searchUrl);
+}
+
+/**
+ * athome's own favourite list, read through a tab on its origin. Failures come
+ * back as a refusal rather than an exception, because the caller must be able
+ * to tell「読めなかった」from「空だった」— acting on the second when it was the
+ * first is how stars get lost.
+ */
+export async function sendFavoriteList(searchUrl: string): Promise<FavoriteList> {
+  try {
+    const tabId = await athomeTab(searchUrl);
+    const reply = await Promise.race([
+      chrome.tabs.sendMessage(tabId, { type: FAVORITES }) as Promise<FavoriteList | undefined>,
+      timeout()
+    ]);
+    if (!reply) {
+      throw new Error('athome のタブが応答しませんでした（タブを再読み込みしてください）');
+    }
+    return reply;
+  } catch (err) {
+    known = null;
+    return { ok: false, ids: [], note: err instanceof Error ? err.message : String(err) };
+  }
 }

@@ -10,10 +10,11 @@
     sortProperties,
     type ViewFilter
   } from '../lib/view';
-  import { sendFavorite, sendUnfavorite } from '../lib/athome-tab';
-  import { deleteFavorite, listFavorites, putFavorite } from '../lib/db';
-  import { isFavouritable } from '../lib/favorite';
+  import { sendFavorite, sendFavoriteList, sendUnfavorite } from '../lib/athome-tab';
+  import { deleteFavorite, getDetail, getListing, listFavorites, putFavorite } from '../lib/db';
+  import { isFavouritable, reconcile } from '../lib/favorite';
   import { detailIdFromUrl } from '../lib/markup';
+  import { loadFavoriteSync, saveFavoriteSync } from '../lib/storage';
   import type { Favorite, FilterSettings, PropertyResult, ResultSet, Settings } from '../lib/types';
 
   type Tab = 'ok' | 'ng' | 'all' | 'fav';
@@ -57,8 +58,26 @@
   /** athome reads a burst of writes as a robot, so a bulk run paces itself. */
   const BULK_DELAY_MS = 1500;
 
+  /**
+   * Syncing with athome's own list. It only runs on the ★ tab: looking at
+   * search results is not a reason to make athome serve a page.
+   */
+  let syncing = $state(false);
+  let syncNote = $state('');
+  let syncedAt = $state<number | null>(null);
+  /** Stars athome no longer has. Counted, never removed without being asked. */
+  let orphans = $state<string[]>([]);
+  let syncedOnce = false;
+
   listFavorites().then(stored => {
     favorites = stored.sort((a, b) => b.addedAt - a.addedAt);
+  });
+  loadFavoriteSync().then(at => (syncedAt = at));
+
+  $effect(() => {
+    if (tab !== 'fav' || syncedOnce) return;
+    syncedOnce = true;
+    void sync();
   });
 
   const favoriteIds = $derived(new Set(favorites.map(entry => entry.id)));
@@ -168,6 +187,7 @@
       id,
       addedAt: Date.now(),
       property: $state.snapshot(property) as PropertyResult,
+      origin: 'extension',
       remote: 'unsent',
       remoteNote: ''
     };
@@ -232,6 +252,77 @@
     }
     void (favoriteIds.has(id) ? unstar(id) : star(property));
   }
+
+  /**
+   * Builds a star for a property registered on athome's own site. Whatever a
+   * past crawl saw of it is reused, so an import usually looks like any other
+   * card; when nothing was ever seen, the number is all there is to show.
+   */
+  async function importFavorite(id: string): Promise<void> {
+    const source = (await getDetail(id)) ?? (await getListing(id));
+    await remember({
+      id,
+      addedAt: Date.now(),
+      property: {
+        url: `https://www.athome.co.jp/tochi/${id}/`,
+        passed: true,
+        reasons: [],
+        name: source?.name || `物件番号 ${id}`,
+        price: source?.price ?? '',
+        area: source?.area ?? '',
+        location: source?.location ?? '',
+        traffic: source?.traffic ?? '',
+        fields: source?.fields ?? {}
+      },
+      origin: 'athome',
+      remote: 'ok',
+      remoteNote: ''
+    });
+  }
+
+  /**
+   * Reads athome's list and takes in what it has. What it no longer has is only
+   * counted: the favourite page's markup and paging are not known well enough
+   * to treat an absence as a deletion without being told to.
+   */
+  async function sync(): Promise<void> {
+    if (syncing) return;
+    syncing = true;
+    syncNote = '';
+
+    try {
+      const list = await sendFavoriteList(results.searchUrl);
+      if (!list.ok) {
+        syncNote = `⚠ ${list.note}`;
+        return;
+      }
+
+      const { toImport, toDrop } = reconcile($state.snapshot(favorites) as Favorite[], list.ids);
+      for (const id of toImport) await importFavorite(id);
+
+      orphans = toDrop;
+      syncedAt = Date.now();
+      await saveFavoriteSync(syncedAt);
+      syncNote = `同期しました（${list.note}${toImport.length ? ` ／ 取り込み ${toImport.length}件` : ''}）`;
+    } catch (err) {
+      syncNote = `⚠ 同期できませんでした: ${err instanceof Error ? err.message : err}`;
+    } finally {
+      syncing = false;
+    }
+  }
+
+  /** These are already gone from athome, so nothing is posted — only dropped. */
+  async function dropOrphans(): Promise<void> {
+    for (const id of orphans) {
+      await deleteFavorite(id);
+      favorites = favorites.filter(f => f.id !== id);
+    }
+    orphans = [];
+  }
+
+  const syncedLabel = $derived(
+    syncedAt === null ? '未同期' : `最終同期 ${new Date(syncedAt).toLocaleString('ja-JP')}`
+  );
 
   /** Everything the current tab shows, one at a time and paced. */
   async function starAll(): Promise<void> {
@@ -493,14 +584,29 @@
   {/if}
 
   {#if tab === 'fav'}
+    <div class="sync">
+      <button type="button" class="agf-btn agf-btn-secondary" disabled={syncing} onclick={sync}>
+        {syncing ? '⏳ 同期中…' : '🔄 athome と同期'}
+      </button>
+      <span class="synced">{syncedLabel}</span>
+      {#if syncNote}
+        <span class="synced" class:bad={syncNote.startsWith('⚠')}>{syncNote}</span>
+      {/if}
+    </div>
+
     <!--
-      athome's own removal request has not been observed, so unstarring is
-      local. Saying so beats sending a guessed-at write to somebody's account.
+      Counted rather than removed. athome's favourite page could have paged past
+      what one sync read, and a star taken away on that guess is not recoverable
+      from here — so the decision stays with the user.
     -->
-    <p class="hint">
-      ★ を押し直すと拡張のお気に入りからは消えますが、athome 側の登録は残ります（解除は athome
-      のサイトで行ってください）。
-    </p>
+    {#if orphans.length}
+      <div class="orphans">
+        <span>⚠ athome 側にない★が {orphans.length}件あります（athome で解除された可能性）</span>
+        <button type="button" class="agf-btn agf-btn-stop" onclick={dropOrphans}>
+          athome に合わせて {orphans.length}件を外す
+        </button>
+      </div>
+    {/if}
   {/if}
 
   <div class="main">
@@ -520,6 +626,7 @@
             favorited={favoriteIds.has(idOf(property))}
             busy={pending.includes(idOf(property))}
             favouritable={isFavouritable(idOf(property))}
+            origin={favorites.find(f => f.id === idOf(property))?.origin}
             note={noteFor(idOf(property))}
             onfavorite={() => toggleStar(property)}
           />
@@ -673,6 +780,33 @@
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
     gap: 16px;
+  }
+  .sync {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 10px 20px;
+    background: var(--agf-surface);
+    border-bottom: 1px solid var(--agf-border);
+  }
+  .synced {
+    font-size: 11px;
+    color: var(--agf-muted);
+  }
+  .synced.bad {
+    color: var(--agf-accent);
+  }
+  .orphans {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 10px 20px;
+    background: var(--agf-accent-soft);
+    border-bottom: 1px solid var(--agf-border);
+    font-size: 12px;
+    color: #555;
   }
   .more {
     display: flex;

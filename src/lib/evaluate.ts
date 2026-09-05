@@ -24,6 +24,17 @@ function parseWidths(raw: string): number[] {
   return [...raw.matchAll(/(\d+(?:\.\d+)?)\s*m/gi)].map(m => Number.parseFloat(m[1]));
 }
 
+/**
+ * The narrowest frontage a property states, in metres, or null when it states
+ * none. A lot is usually listed against several roads and the narrowest is what
+ * decides whether it can be built on, which is why the filter compares that one
+ * — and why a card showing anything else would disagree with its own verdict.
+ */
+export function narrowestRoadWidth(raw: string): number | null {
+  const widths = parseWidths(raw);
+  return widths.length > 0 ? Math.min(...widths) : null;
+}
+
 function parseLeadingNumber(raw: string): number | null {
   const m = raw.replace(/,/g, '').match(/(\d+(?:\.\d+)?)/);
   return m ? Number.parseFloat(m[1]) : null;
@@ -81,12 +92,9 @@ export function evaluate(
       }
       case 'min_road_width': {
         const { minWidth } = state as MinRoadWidthState;
-        const widths = parseWidths(raw);
-        if (widths.length > 0) {
-          const narrowest = Math.min(...widths);
-          if (narrowest <= minWidth) {
-            reasons.push(`${def.label}: ${narrowest}${def.unit} ≤ ${minWidth}${def.unit}`);
-          }
+        const narrowest = narrowestRoadWidth(raw);
+        if (narrowest !== null && narrowest <= minWidth) {
+          reasons.push(`${def.label}: ${narrowest}${def.unit} ≤ ${minWidth}${def.unit}`);
         }
         break;
       }

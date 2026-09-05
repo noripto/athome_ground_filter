@@ -1,6 +1,6 @@
 <script lang="ts">
   import { DISPLAY_FIELDS } from '../lib/config';
-  import { findField } from '../lib/evaluate';
+  import { findField, narrowestRoadWidth } from '../lib/evaluate';
   import type { PropertyResult } from '../lib/types';
 
   interface Props {
@@ -15,6 +15,8 @@
     favouritable?: boolean;
     /** Why athome refused this one, when it did. */
     note?: string;
+    /** Set on a starred property, saying which side it was starred from. */
+    origin?: 'extension' | 'athome';
   }
 
   let {
@@ -24,7 +26,8 @@
     favorited = false,
     busy = false,
     favouritable = true,
-    note = ''
+    note = '',
+    origin = undefined
   }: Props = $props();
 
   const shownFields = $derived(
@@ -32,6 +35,13 @@
       .filter(entry => entry.value !== '')
       .slice(0, maxFields)
   );
+
+  /**
+   * The frontage filter judges a number the card never showed: 「北 幅員4.0m」
+   * is what gets printed, and 4.0 is what gets compared. Deriving it from the
+   * same helper the filter uses means the two can never disagree.
+   */
+  const roadWidth = $derived(narrowestRoadWidth(findField(property.fields, '接道状況')));
 
   // The name falls back to the address, so only repeat it when it adds something.
   const showLocation = $derived(property.location !== '' && property.location !== property.name);
@@ -42,6 +52,10 @@
     <h3 class="name">{property.name || '物件名不明'}</h3>
     <span class="badge" class:ok={property.passed}>{property.passed ? '✓ 合致' : '✗ 除外'}</span>
   </div>
+  {#if origin === 'athome'}
+    <!-- Nothing judged it, so the ✓ badge above is not a verdict on this one. -->
+    <div class="origin">athome 側で登録された物件（条件は未判定）</div>
+  {/if}
   {#if note}
     <div class="note">{note}</div>
   {/if}
@@ -73,6 +87,17 @@
           <dt>{field.key}</dt>
           <dd>{field.value}</dd>
         </div>
+        <!--
+          Sits right after 接道状況 rather than in DISPLAY_FIELDS, because it is
+          read off that field rather than being one of its own — and so it does
+          not eat one of the `maxFields` slots.
+        -->
+        {#if field.key === '接道状況' && roadWidth !== null}
+          <div class="field">
+            <dt>接道幅</dt>
+            <dd class="derived">{roadWidth}m</dd>
+          </div>
+        {/if}
       {/each}
     </dl>
   {/if}
@@ -144,6 +169,11 @@
     line-height: 1.5;
     color: var(--agf-text);
     word-break: break-word;
+  }
+  .origin {
+    font-size: 11px;
+    color: var(--agf-muted);
+    line-height: 1.6;
   }
   .note {
     font-size: 11px;
@@ -228,6 +258,9 @@
     font-size: 11px;
     color: var(--agf-accent);
     font-weight: 600;
+  }
+  .derived {
+    font-weight: 700;
   }
   .actions {
     display: flex;

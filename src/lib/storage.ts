@@ -3,6 +3,7 @@ import type { FilterSettings, ResultSet, Settings } from './types';
 
 const SETTINGS_KEY = 'agfSettings';
 const RESULTS_KEY = 'agfResults';
+const FAVORITE_SYNC_KEY = 'agfFavoriteSync';
 
 /**
  * Merges stored settings over the defaults so that filters added in a later
@@ -68,4 +69,18 @@ export async function loadResults(): Promise<ResultSet | null> {
 
 export async function saveResults(results: ResultSet): Promise<void> {
   await chrome.storage.local.set({ [RESULTS_KEY]: results });
+}
+
+/**
+ * When athome's own favourite list was last read. Kept out of IndexedDB with
+ * the stars themselves: it describes the sync rather than the marks, and losing
+ * it costs one extra request.
+ */
+export async function loadFavoriteSync(): Promise<number | null> {
+  const stored = await chrome.storage.local.get(FAVORITE_SYNC_KEY);
+  return (stored[FAVORITE_SYNC_KEY] as number | undefined) ?? null;
+}
+
+export async function saveFavoriteSync(at: number): Promise<void> {
+  await chrome.storage.local.set({ [FAVORITE_SYNC_KEY]: at });
 }

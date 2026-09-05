@@ -163,6 +163,12 @@ export interface Favorite {
   id: string;
   addedAt: number;
   property: PropertyResult;
+  /**
+   * Whether this star was made here or found on athome. One picked up from
+   * athome may be all but empty, and saying where it came from is what makes
+   * that look deliberate rather than broken.
+   */
+  origin?: 'extension' | 'athome';
   remote: RemoteState;
   /** Why athome refused, when it did. Shown so a failure is not a mystery. */
   remoteNote: string;
