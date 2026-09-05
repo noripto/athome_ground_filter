@@ -1,6 +1,5 @@
 import type { FilterDef, FilterSettings, Settings } from './types';
 
-/** Detail-page fields surfaced on each result card, in display order. */
 export const DISPLAY_FIELDS = [
   '都市計画',
   '地目',
@@ -18,7 +17,6 @@ export const DISPLAY_FIELDS = [
   '土地権利'
 ] as const;
 
-/** Defaults mirror the prototype: 市街化調整区域 / 畑 / 接道3m以下 are excluded. */
 export const FILTER_DEFS: FilterDef[] = [
   {
     id: 'toshikeikaku',
@@ -174,6 +172,7 @@ export const FILTER_DEFS: FilterDef[] = [
     detailKey: '土地面積',
     type: 'numeric_range',
     unit: 'm²',
+    parseAs: 'area',
     defaultEnabled: false,
     defaultMin: null,
     defaultMax: null
@@ -184,13 +183,25 @@ export const FILTER_DEFS: FilterDef[] = [
     detailKey: '価格',
     type: 'numeric_range',
     unit: '万円',
+    parseAs: 'price',
     defaultEnabled: false,
     defaultMin: null,
     defaultMax: null
+  },
+  {
+    id: 'ekitoho',
+    label: '駅徒歩',
+    detailKey: '交通',
+    type: 'numeric_range',
+    unit: '分',
+    parseAs: 'walk',
+    defaultEnabled: false,
+    defaultMin: null,
+    defaultMax: null,
+    help: '最寄り駅までの徒歩分数で絞り込みます。複数路線があるときは最も近い駅で判定します（バス便は徒歩に数えません）'
   }
 ];
 
-/** Section grouping for the settings UI. */
 export const SECTIONS: { title: string; ids: string[] }[] = [
   {
     title: '用途・規制',
@@ -199,14 +210,28 @@ export const SECTIONS: { title: string; ids: string[] }[] = [
   { title: '接道', ids: ['setsudo'] },
   { title: '権利・取引', ids: ['tochiken', 'torihiki'] },
   { title: 'インフラ', ids: ['suido', 'gesui', 'gas', 'denki'] },
-  { title: '数値範囲', ids: ['kenpeito', 'yosekiritsu', 'menseki', 'kakaku'] }
+  { title: '数値範囲', ids: ['kenpeito', 'yosekiritsu', 'menseki', 'kakaku', 'ekitoho'] }
 ];
 
-/** The only values the count buttons offer, and so the only valid counts. */
-export const COUNT_PRESETS: readonly number[] = [30, 50, 100, 200];
+export const COUNT_PRESETS: readonly number[] = [30, 50, 100, 200, 0];
+
+export function countLabel(count: number): string {
+  return count === 0 ? '全件' : `${count}件`;
+}
 
 export const DEFAULT_TARGET_COUNT = 30;
-export const DEFAULT_REQUEST_DELAY_MS = 400;
+
+export const LIST_PAGE_SIZE = 50;
+
+export const MAX_LIST_PAGES = 400;
+
+export const MAX_DETAIL_FETCHES = 5000;
+
+export const DEFAULT_REQUEST_DELAY_MS = 900;
+
+export const MIN_REQUEST_DELAY_MS = 500;
+
+export const DEFAULT_DETAIL_MAX_AGE_DAYS = 7;
 
 export function getFilterDef(id: string): FilterDef | undefined {
   return FILTER_DEFS.find(d => d.id === id);
@@ -237,6 +262,7 @@ export function getDefaultSettings(): Settings {
   return {
     targetCount: DEFAULT_TARGET_COUNT,
     requestDelayMs: DEFAULT_REQUEST_DELAY_MS,
+    detailMaxAgeDays: DEFAULT_DETAIL_MAX_AGE_DAYS,
     keepExcluded: true,
     filters: getDefaultFilters()
   };

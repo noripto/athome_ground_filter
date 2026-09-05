@@ -16,7 +16,6 @@
 
   let { def, state = $bindable() }: Props = $props();
 
-  // Number inputs bind to strings so an empty box means "no bound" rather than 0.
   function toNumber(value: string): number | null {
     const trimmed = value.trim();
     if (trimmed === '') return null;

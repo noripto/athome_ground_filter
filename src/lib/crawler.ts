@@ -1,207 +1,203 @@
+import { LIST_PAGE_SIZE, MAX_LIST_PAGES } from './config';
 import { findField } from './evaluate';
-import type { PropertyResult } from './types';
+import {
+  AbortedError,
+  BlockedError,
+  fetchPage,
+  paceDelay,
+  sleep,
+  throwIfAborted,
+  type Pacer,
+  type PageOutcome
+} from './fetcher';
+import {
+  bareListing,
+  extractDetailLinks,
+  parseDetailFields,
+  parseListingCards,
+  parseTotalCount,
+  readDetailName
+} from './markup';
+import { listingsFromState } from './state';
+import type { Listing, PropertyResult, StopReason } from './types';
 
-/** Property detail URLs look like /tochi/[area/]1234567/ — the digits are the id. */
-const DETAIL_URL_RE = /www\.athome\.co\.jp\/tochi\/(?:[^/\d][^/]*\/)?(\d{7,})\//;
-
-/** Results per list page requested from the site. */
-const PAGE_SIZE = 30;
-
-/** Give up paging after this many consecutive pages that add nothing new. */
-const MAX_EMPTY_PAGES = 2;
-
-/** Hard stop so a bad URL pattern can never spin forever. */
-const MAX_PAGES = 40;
-
-export const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
-
-export class AbortedError extends Error {
-  constructor() {
-    super('中断しました');
-    this.name = 'AbortedError';
-  }
-}
-
-function throwIfAborted(signal?: AbortSignal): void {
-  if (signal?.aborted) throw new AbortedError();
-}
-
-function detailUrlFromId(id: string): string {
-  return `https://www.athome.co.jp/tochi/${id}/`;
-}
-
-/** Collects unique detail URLs out of any document, preserving DOM order. */
-export function extractDetailLinks(root: Document | ParentNode, baseUrl: string): string[] {
-  const seen = new Set<string>();
-  const urls: string[] = [];
-
-  for (const anchor of root.querySelectorAll('a[href]')) {
-    const raw = anchor.getAttribute('href');
-    if (!raw) continue;
-
-    let href: string;
-    try {
-      href = new URL(raw, baseUrl).href;
-    } catch {
-      continue;
-    }
-
-    const match = href.match(DETAIL_URL_RE);
-    if (!match || seen.has(match[1])) continue;
-    seen.add(match[1]);
-    urls.push(detailUrlFromId(match[1]));
-  }
-
-  return urls;
-}
-
-/** Rewrites a list URL to point at `page`, keeping the search conditions intact. */
-export function buildPageUrl(baseUrl: string, page: number): string {
+export function buildPageUrl(baseUrl: string, page: number, pageSize = LIST_PAGE_SIZE): string {
   const url = new URL(baseUrl);
-  let path = url.pathname.replace(/\/list\/\d+\/?$/, '/list/');
+  let path = url.pathname.replace(/\/list\/(?:page)?\d+\/?$/, '/list/');
   if (!path.endsWith('/')) path += '/';
-  if (page > 1) path = path.replace(/\/list\/$/, `/list/${page}/`);
+  if (page > 1) path = path.replace(/\/list\/$/, `/list/page${page}/`);
   url.pathname = path;
-  url.searchParams.set('limit', String(PAGE_SIZE));
+  url.searchParams.set('limit', String(pageSize));
   return url.toString();
 }
 
-async function fetchDocument(url: string, signal?: AbortSignal): Promise<Document | null> {
-  const res = await fetch(url, { credentials: 'include', signal });
-  if (!res.ok) return null;
-  return new DOMParser().parseFromString(await res.text(), 'text/html');
+const INCIDENTAL_PARAMS = ['limit', 'page', 'sref', 'DOWN', 'BKLISTID', 'SEARCHDIV'];
+
+export function canonicalSearchKey(searchUrl: string): string {
+  const url = new URL(searchUrl);
+  url.pathname = url.pathname.replace(/\/list\/(?:page)?\d+\/?$/, '/list/');
+  url.hash = '';
+
+  for (const name of INCIDENTAL_PARAMS) url.searchParams.delete(name);
+  const params = [...url.searchParams.entries()].sort(([a], [b]) => a.localeCompare(b));
+  url.search = new URLSearchParams(params).toString();
+
+  return url.toString();
+}
+
+export function expectedPages(total: number | null, pageSize: number): number | null {
+  if (total === null || pageSize <= 0) return null;
+  return Math.ceil(total / pageSize);
+}
+
+export type ListingSource = 'state' | 'cards' | 'links';
+
+export interface ListCrawlReport {
+  pagesCrawled: number;
+  totalCount: number | null;
+  stoppedBy: StopReason | null;
+  source: ListingSource | null;
+}
+
+export function newListCrawlReport(): ListCrawlReport {
+  return { pagesCrawled: 0, totalCount: null, stoppedBy: null, source: null };
+}
+
+const SOURCE_RANK: Record<ListingSource, number> = { state: 0, cards: 1, links: 2 };
+
+function noteSource(report: ListCrawlReport, source: ListingSource): void {
+  if (report.source === null || SOURCE_RANK[source] > SOURCE_RANK[report.source]) {
+    report.source = source;
+  }
+}
+
+function readListPage(
+  html: string,
+  doc: Document,
+  url: string,
+  report: ListCrawlReport
+): Listing[] {
+  const fromState = listingsFromState(html);
+  if (fromState.length > 0) {
+    noteSource(report, 'state');
+    return fromState;
+  }
+
+  const cards = parseListingCards(doc, url);
+  if (cards.length > 0) {
+    noteSource(report, 'cards');
+    return cards;
+  }
+
+  const links = extractDetailLinks(doc, url);
+  if (links.length > 0) noteSource(report, 'links');
+  return links.map(bareListing);
+}
+
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  return a.length > 0 && a.length === b.length && a.every((id, i) => id === b[i]);
 }
 
 export interface LinkStreamOptions {
   baseUrl: string;
   delayMs: number;
+  pageSize?: number;
   signal?: AbortSignal;
-  /** Links found in the already-rendered first page, if any. */
-  seedLinks?: string[];
-  /** Called once per list page read, with the running totals. */
-  onPage?: (pagesCrawled: number, linksSeen: number) => void;
+  pacer?: Pacer;
+  report: ListCrawlReport;
+  onPage?: (report: ListCrawlReport, linksSeen: number) => void;
 }
 
-/**
- * Yields unique detail URLs, pulling in the next list page only once the caller
- * has consumed everything found so far. The caller decides when to stop — it
- * knows how many properties actually passed the filters, which is what the
- * requested count refers to.
- */
-export async function* streamDetailLinks(options: LinkStreamOptions): AsyncGenerator<string> {
-  const { baseUrl, delayMs, signal, seedLinks = [], onPage } = options;
+export async function* streamListings(options: LinkStreamOptions): AsyncGenerator<Listing> {
+  const { baseUrl, delayMs, pageSize = LIST_PAGE_SIZE, signal, pacer, report, onPage } = options;
 
   const seen = new Set<string>();
-  let pagesCrawled = 0;
+  let previousIds: string[] = [];
+  let page = 1;
 
-  if (seedLinks.length > 0) {
-    pagesCrawled = 1;
-    const fresh = [...new Set(seedLinks)];
-    fresh.forEach(link => seen.add(link));
-    onPage?.(pagesCrawled, seen.size);
-    yield* fresh;
-  }
-
-  let page = pagesCrawled + 1;
-  let emptyPages = 0;
-
-  while (page <= MAX_PAGES && emptyPages < MAX_EMPTY_PAGES) {
+  while (page <= MAX_LIST_PAGES) {
     throwIfAborted(signal);
-    await sleep(delayMs);
+    await sleep(paceDelay(delayMs, pacer?.cooldownMs), signal);
 
-    const url = buildPageUrl(baseUrl, page);
-    const doc = await fetchDocument(url, signal);
-    if (!doc) break;
+    const url = buildPageUrl(baseUrl, page, pageSize);
+    const outcome = await fetchPage(url, { signal, pacer });
 
-    pagesCrawled++;
-    page++;
+    if (outcome.kind !== 'ok') {
+      report.stoppedBy =
+        outcome.kind === 'notfound'
+          ? page > 1
+            ? 'exhausted'
+            : 'http'
+          : outcome.kind === 'challenged'
+            ? 'blocked'
+            : 'http';
+      return;
+    }
 
-    const fresh = extractDetailLinks(doc, url).filter(link => !seen.has(link));
-    if (fresh.length === 0) emptyPages++;
-    else emptyPages = 0;
+    if (report.totalCount === null) report.totalCount = parseTotalCount(outcome.html);
 
-    fresh.forEach(link => seen.add(link));
-    onPage?.(pagesCrawled, seen.size);
+    const listings = readListPage(outcome.html, outcome.doc, url, report);
+    const ids = listings.map(listing => listing.id);
+
+    if (sameIds(ids, previousIds)) {
+      report.stoppedBy = 'paging';
+      return;
+    }
+    previousIds = ids;
+
+    report.pagesCrawled = page;
+    const fresh = listings.filter(listing => !seen.has(listing.id));
+    fresh.forEach(listing => seen.add(listing.id));
+    onPage?.(report, seen.size);
     yield* fresh;
-  }
-}
 
-/**
- * Strips interactive chrome out of a cell before reading it, so values don't
- * pick up junk like 「地図を見る」 that the site renders inside table cells.
- */
-function cleanText(el: Element | null | undefined): string {
-  if (!el) return '';
-  const clone = el.cloneNode(true) as Element;
-  for (const junk of clone.querySelectorAll(
-    'a, button, script, style, input, select, [role="button"]'
-  )) {
-    junk.remove();
-  }
-  return clone.textContent?.replace(/\s+/g, ' ').trim() ?? '';
-}
+    if (listings.length === 0) {
+      report.stoppedBy = 'exhausted';
+      return;
+    }
 
-/** Reads every th/td and dt/dd pair on a detail page into a flat field map. */
-export function parseDetailFields(doc: Document): Record<string, string> {
-  const fields: Record<string, string> = {};
+    const lastPage = expectedPages(report.totalCount, pageSize);
+    if (lastPage !== null && page >= lastPage) {
+      report.stoppedBy = 'complete';
+      return;
+    }
 
-  for (const row of doc.querySelectorAll('tr')) {
-    const headers = [...row.querySelectorAll('th')];
-    const cells = [...row.querySelectorAll('td')];
-    headers.forEach((th, i) => {
-      const key = th.textContent?.replace(/\s+/g, '') ?? '';
-      if (key) fields[key] = cleanText(cells[i]);
-    });
+    page++;
   }
 
-  for (const dt of doc.querySelectorAll('dl dt')) {
-    const dd = dt.nextElementSibling;
-    if (dd?.tagName !== 'DD') continue;
-    const key = dt.textContent?.replace(/\s+/g, '') ?? '';
-    if (key) fields[key] = cleanText(dd);
-  }
-
-  return fields;
+  report.stoppedBy = 'limit';
 }
 
-/**
- * The listing's own name. athome prints it in the page heading — either a
- * development name (「【積水ハウス】コモンステージ武蔵村山大南」) or just the
- * neighbourhood (「久が原３丁目」). Falls back to the address when a page has
- * no heading at all.
- */
-function readName(doc: Document, fields: Record<string, string>, location: string): string {
-  const heading = doc.querySelector('h1')?.textContent?.replace(/\s+/g, ' ').trim();
-  return heading || findField(fields, '物件名') || location;
-}
-
-/**
- * The price cell is assembled from separate spans (「1億」「500万円」), so the
- * whitespace between them has to go before it reads as a single amount.
- */
 function readPrice(fields: Record<string, string>): string {
   return findField(fields, '価格').replace(/\s+/g, '');
 }
 
 export type DetailData = Omit<PropertyResult, 'url' | 'passed' | 'reasons'>;
 
-export async function fetchDetail(url: string, signal?: AbortSignal): Promise<DetailData | null> {
-  let doc: Document | null;
+export async function fetchDetail(
+  url: string,
+  signal?: AbortSignal,
+  pacer?: Pacer
+): Promise<DetailData | null> {
+  let outcome: PageOutcome;
   try {
-    doc = await fetchDocument(url, signal);
+    outcome = await fetchPage(url, { signal, pacer });
   } catch (err) {
-    if (signal?.aborted) throw new AbortedError();
+    if (err instanceof AbortedError) throw err;
     console.warn('[AGF] 詳細取得に失敗:', url, err);
     return null;
   }
-  if (!doc) return null;
 
+  if (outcome.kind === 'challenged') throw new BlockedError();
+  if (outcome.kind !== 'ok') return null;
+
+  const doc = outcome.doc;
   const fields = parseDetailFields(doc);
   const location = findField(fields, '所在地');
 
   return {
     fields,
-    name: readName(doc, fields, location),
+    name: readDetailName(doc, fields, location),
     price: readPrice(fields),
     area: findField(fields, '土地面積'),
     location,

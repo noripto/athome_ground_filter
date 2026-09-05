@@ -3,7 +3,7 @@
   "name": "AtHome 土地フィルター",
   "version": "1.0.0",
   "description": "athome.co.jp の土地検索を詳細条件でクロール・フィルタリングし、指定件数の結果を表示します",
-  "permissions": ["storage", "tabs"],
+  "permissions": ["storage", "unlimitedStorage", "tabs"],
   "host_permissions": ["https://www.athome.co.jp/*"],
   "content_scripts": [
     {

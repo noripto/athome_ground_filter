@@ -1,14 +1,10 @@
-/** Shape of every filter definition and of the settings the user edits. */
-
 export type FilterType = 'exclude_text' | 'min_road_width' | 'require_contains' | 'numeric_range';
 
 interface BaseFilterDef {
   id: string;
   label: string;
-  /** Key looked up in the detail page's field table (partial match). */
   detailKey: string;
   defaultEnabled: boolean;
-  /** Short explanation shown under the row in the settings UI. */
   help?: string;
 }
 
@@ -34,6 +30,7 @@ export interface NumericRangeDef extends BaseFilterDef {
   unit: string;
   defaultMin: number | null;
   defaultMax: number | null;
+  parseAs?: 'price' | 'area' | 'walk';
 }
 
 export type FilterDef = ExcludeTextDef | MinRoadWidthDef | RequireContainsDef | NumericRangeDef;
@@ -62,20 +59,16 @@ export type FilterState =
 export type FilterSettings = Record<string, FilterState>;
 
 export interface Settings {
-  /** How many *passing* properties to look for. Excluded ones do not count. */
   targetCount: number;
-  /** Delay between detail-page fetches, in ms. Keeps the crawl polite. */
   requestDelayMs: number;
-  /** Also list properties that were excluded, with their reasons. */
+  detailMaxAgeDays: number;
   keepExcluded: boolean;
   filters: FilterSettings;
 }
 
-export interface PropertyResult {
+export interface Listing {
+  id: string;
   url: string;
-  passed: boolean;
-  reasons: string[];
-  /** The listing's own name, as athome prints it in the detail page heading. */
   name: string;
   price: string;
   area: string;
@@ -84,23 +77,70 @@ export interface PropertyResult {
   fields: Record<string, string>;
 }
 
-/** Why the crawl stopped: the goal was met, the search ran dry, or a cap hit. */
-export type StopReason = 'target' | 'exhausted' | 'limit';
+export interface Detail {
+  id: string;
+  fields: Record<string, string>;
+  name: string;
+  price: string;
+  area: string;
+  location: string;
+  traffic: string;
+  fetchedAt: number;
+}
+
+export interface SearchRecord {
+  searchKey: string;
+  searchUrl: string;
+  totalCount: number | null;
+  pagesCrawled: number;
+  listingIds: string[];
+  startedAt: number;
+  updatedAt: number;
+  finishedAt: number | null;
+  stoppedBy: StopReason | null;
+}
+
+export interface PropertyResult {
+  url: string;
+  passed: boolean;
+  reasons: string[];
+  name: string;
+  price: string;
+  area: string;
+  location: string;
+  traffic: string;
+  fields: Record<string, string>;
+}
+
+export type RemoteState = 'unsent' | 'ok' | 'failed';
+
+export interface Favorite {
+  id: string;
+  addedAt: number;
+  property: PropertyResult;
+  origin?: 'extension' | 'athome';
+  remote: RemoteState;
+  remoteNote: string;
+}
+
+export type StopReason =
+  'target' | 'exhausted' | 'limit' | 'complete' | 'aborted' | 'blocked' | 'http' | 'paging';
 
 export interface ResultSet {
   timestamp: number;
   searchUrl: string;
-  /** How many passing properties were asked for. */
   requested: number;
-  /** How many detail pages were opened to find them. */
+  totalCount: number | null;
   inspected: number;
   passed: number;
   excluded: number;
   failed: number;
+  skipped: number;
+  cached: number;
   pagesCrawled: number;
   stoppedBy: StopReason;
-  /** The cap on inspected properties that applied to this run. */
   inspectLimit: number;
   activeFilters: string[];
+  source?: 'state' | 'cards' | 'links' | null;
   properties: PropertyResult[];
 }

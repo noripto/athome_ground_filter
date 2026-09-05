@@ -3,15 +3,9 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
 
 const CSS_TOKEN = '__AGF_INLINE_CSS__';
 
-/**
- * Chrome injects the content script as a plain file, and the panel renders into
- * a shadow root, so a separate .css asset would never reach it. This folds the
- * whole stylesheet back into the bundle as a string literal that main.ts adopts.
- */
 function inlineCss(): Plugin {
   return {
     name: 'agf-inline-css',
-    // Must run after vite's own css-post plugin, which is what emits the sheet.
     enforce: 'post',
     generateBundle(_options, bundle) {
       let css = '';
@@ -29,8 +23,6 @@ function inlineCss(): Plugin {
   };
 }
 
-// The content script must be one self-contained IIFE: Chrome loads it as a
-// classic script, so no import statements and no code-splitting are allowed.
 export default defineConfig({
   plugins: [svelte(), inlineCss()],
   publicDir: false,

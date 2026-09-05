@@ -1,6 +1,14 @@
 <script lang="ts">
   import FilterRow from './FilterRow.svelte';
-  import { COUNT_PRESETS, FILTER_DEFS, SECTIONS, getFilterDef } from '../lib/config';
+  import {
+    COUNT_PRESETS,
+    FILTER_DEFS,
+    MIN_REQUEST_DELAY_MS,
+    SECTIONS,
+    countLabel,
+    getFilterDef
+  } from '../lib/config';
+  import { clearCache, countDetails } from '../lib/db';
   import { describeActiveFilters } from '../lib/evaluate';
   import { inspectLimitFor } from '../lib/run';
   import { loadSettings, resetSettings, saveSettings } from '../lib/storage';
@@ -8,15 +16,36 @@
 
   interface Props {
     title?: string;
-    /** Rendered when the editor lives in a dismissable overlay. */
     onclose?: () => void;
+    onapply?: (settings: Settings) => void;
   }
 
-  let { title = '⚙ 土地フィルター 設定', onclose }: Props = $props();
+  let { title = '⚙ 土地フィルター 設定', onclose, onapply }: Props = $props();
 
   let settings = $state<Settings | null>(null);
+  let cachedCount = $state<number | null>(null);
   let notice = $state('');
   let noticeTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const ownsCache = window.location.protocol === 'chrome-extension:';
+
+  function refreshCacheCount() {
+    if (!ownsCache) return;
+    countDetails().then(
+      count => (cachedCount = count),
+      () => (cachedCount = null)
+    );
+  }
+
+  refreshCacheCount();
+
+  async function dropCache() {
+    if (!confirm('保存済みの詳細ページをすべて削除しますか？\n次回の取得は全件を読み直します。'))
+      return;
+    await clearCache();
+    refreshCacheCount();
+    flash('✓ キャッシュを削除しました');
+  }
 
   const activeSummary = $derived(settings ? describeActiveFilters(settings.filters) : []);
   const inspectLimit = $derived(inspectLimitFor(settings?.targetCount ?? 0));
@@ -33,9 +62,11 @@
 
   async function save() {
     if (!settings) return;
-    await saveSettings($state.snapshot(settings));
+    const saved = $state.snapshot(settings);
+    await saveSettings(saved);
     const active = activeSummary.length;
     flash(`✓ 保存しました（有効な条件: ${active ? `${active}件` : 'なし'}）`);
+    onapply?.(saved);
   }
 
   async function reset() {
@@ -75,13 +106,19 @@
               type="button"
               class="preset"
               class:active={settings.targetCount === preset}
-              onclick={() => settings && (settings.targetCount = preset)}>{preset}件</button
+              onclick={() => settings && (settings.targetCount = preset)}
+              >{countLabel(preset)}</button
             >
           {/each}
         </div>
         <div class="crawl-help">
-          条件に合致した物件がこの件数に達するまでページを辿ります。除外された物件は件数に含まれません。
-          合致が集まらない場合は、詳細ページを {inspectLimit} 件確認した時点で打ち切ります。
+          {#if settings.targetCount === 0}
+            検索結果を最後のページまで辿ります。除外された物件も含め、詳細ページを
+            {inspectLimit} 件確認した時点で打ち切ります。
+          {:else}
+            条件に合致した物件がこの件数に達するまでページを辿ります。除外された物件は件数に含まれません。
+            合致が集まらない場合は、詳細ページを {inspectLimit} 件確認した時点で打ち切ります。
+          {/if}
         </div>
       </div>
 
@@ -91,13 +128,44 @@
           id="agf-delay"
           class="agf-num"
           type="number"
-          min="0"
+          min={MIN_REQUEST_DELAY_MS}
           max="5000"
           step="100"
           bind:value={settings.requestDelayMs}
         />
-        <span class="agf-unit">ms — 短くしすぎるとサイト側に負荷がかかります</span>
+        <span class="agf-unit">
+          ms — 短くすると athome のアクセス制限に掛かりやすくなります（{MIN_REQUEST_DELAY_MS} 以上）
+        </span>
       </div>
+
+      <div class="crawl">
+        <label class="crawl-label" for="agf-cache-age">詳細キャッシュの有効期間</label>
+        <input
+          id="agf-cache-age"
+          class="agf-num"
+          type="number"
+          min="0"
+          max="365"
+          step="1"
+          bind:value={settings.detailMaxAgeDays}
+        />
+        <span class="agf-unit">日</span>
+        <div class="crawl-help">
+          一度読んだ詳細ページはこの期間だけ再利用し、2回目以降の取得では新着物件だけを読みます。
+          価格や掲載終了は一覧ページから毎回読み直すので、この値を長くしても最新のままです。 0
+          にすると毎回すべて取得し直します。
+        </div>
+      </div>
+
+      {#if ownsCache}
+        <div class="crawl">
+          <span class="crawl-label">保存済みの詳細</span>
+          <span class="agf-unit">{cachedCount === null ? '確認中…' : `${cachedCount}件`}</span>
+          <button type="button" class="agf-btn agf-btn-secondary" onclick={dropCache}>
+            キャッシュを削除
+          </button>
+        </div>
+      {/if}
 
       <div class="crawl">
         <label class="crawl-check">
@@ -151,13 +219,6 @@
   .actions {
     display: flex;
     gap: 8px;
-  }
-  :global(.agf-btn-save) {
-    background: #fff;
-    color: var(--agf-accent);
-  }
-  :global(.agf-btn-save:hover) {
-    background: #ffe8e6;
   }
   .notice {
     background: var(--agf-ok-soft);

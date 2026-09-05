@@ -1,16 +1,14 @@
 import { FILTER_DEFS } from './config';
+import { parseAreaSqm, parsePriceMan, parseWalkMinutes } from './numbers';
 import type {
   ExcludeTextState,
+  NumericRangeDef,
   FilterSettings,
   MinRoadWidthState,
   NumericRangeState,
   RequireContainsState
 } from './types';
 
-/**
- * Detail tables label the same concept slightly differently between listings
- * (「接道状況」 vs 「接道」), so keys are matched by containment either way.
- */
 export function findField(fields: Record<string, string>, key: string): string {
   for (const [k, v] of Object.entries(fields)) {
     if (k.includes(key) || key.includes(k)) return v;
@@ -22,19 +20,39 @@ function parseWidths(raw: string): number[] {
   return [...raw.matchAll(/(\d+(?:\.\d+)?)\s*m/gi)].map(m => Number.parseFloat(m[1]));
 }
 
+export function narrowestRoadWidth(raw: string): number | null {
+  const widths = parseWidths(raw);
+  return widths.length > 0 ? Math.min(...widths) : null;
+}
+
 function parseLeadingNumber(raw: string): number | null {
   const m = raw.replace(/,/g, '').match(/(\d+(?:\.\d+)?)/);
   return m ? Number.parseFloat(m[1]) : null;
 }
 
-/** Returns one reason per failed filter; an empty array means the property passes. */
-export function evaluate(filters: FilterSettings, fields: Record<string, string>): string[] {
+function readRangeValue(raw: string, parseAs: NumericRangeDef['parseAs']): number | null {
+  if (parseAs === 'price') return parsePriceMan(raw);
+  if (parseAs === 'area') return parseAreaSqm(raw);
+  if (parseAs === 'walk') return parseWalkMinutes(raw);
+  return parseLeadingNumber(raw);
+}
+
+export interface EvaluateOptions {
+  presentFieldsOnly?: boolean;
+}
+
+export function evaluate(
+  filters: FilterSettings,
+  fields: Record<string, string>,
+  options: EvaluateOptions = {}
+): string[] {
   const reasons: string[] = [];
 
   for (const def of FILTER_DEFS) {
     const state = filters[def.id];
     if (!state?.enabled) continue;
     const raw = findField(fields, def.detailKey);
+    if (options.presentFieldsOnly && raw === '') continue;
 
     switch (def.type) {
       case 'exclude_text': {
@@ -52,18 +70,15 @@ export function evaluate(filters: FilterSettings, fields: Record<string, string>
       }
       case 'min_road_width': {
         const { minWidth } = state as MinRoadWidthState;
-        const widths = parseWidths(raw);
-        if (widths.length > 0) {
-          const narrowest = Math.min(...widths);
-          if (narrowest <= minWidth) {
-            reasons.push(`${def.label}: ${narrowest}${def.unit} ≤ ${minWidth}${def.unit}`);
-          }
+        const narrowest = narrowestRoadWidth(raw);
+        if (narrowest !== null && narrowest <= minWidth) {
+          reasons.push(`${def.label}: ${narrowest}${def.unit} ≤ ${minWidth}${def.unit}`);
         }
         break;
       }
       case 'numeric_range': {
         const { min, max } = state as NumericRangeState;
-        const n = parseLeadingNumber(raw);
+        const n = readRangeValue(raw, def.parseAs);
         if (n === null) break;
         if (min !== null && n < min) reasons.push(`${def.label}: ${n}${def.unit} < ${min}`);
         if (max !== null && n > max) reasons.push(`${def.label}: ${n}${def.unit} > ${max}`);
@@ -75,7 +90,6 @@ export function evaluate(filters: FilterSettings, fields: Record<string, string>
   return reasons;
 }
 
-/** Human-readable one-line summary of which filters are currently enabled. */
 export function describeActiveFilters(filters: FilterSettings): string[] {
   const parts: string[] = [];
 

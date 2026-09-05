@@ -1,14 +1,29 @@
 <script lang="ts">
   import { DISPLAY_FIELDS } from '../lib/config';
-  import { findField } from '../lib/evaluate';
+  import { findField, narrowestRoadWidth } from '../lib/evaluate';
   import type { PropertyResult } from '../lib/types';
 
   interface Props {
     property: PropertyResult;
     maxFields?: number;
+    onfavorite?: () => void;
+    favorited?: boolean;
+    busy?: boolean;
+    favouritable?: boolean;
+    note?: string;
+    origin?: 'extension' | 'athome';
   }
 
-  let { property, maxFields = 9 }: Props = $props();
+  let {
+    property,
+    maxFields = 9,
+    onfavorite,
+    favorited = false,
+    busy = false,
+    favouritable = true,
+    note = '',
+    origin = undefined
+  }: Props = $props();
 
   const shownFields = $derived(
     DISPLAY_FIELDS.map(key => ({ key, value: findField(property.fields, key) }))
@@ -16,7 +31,8 @@
       .slice(0, maxFields)
   );
 
-  // The name falls back to the address, so only repeat it when it adds something.
+  const roadWidth = $derived(narrowestRoadWidth(findField(property.fields, '接道状況')));
+
   const showLocation = $derived(property.location !== '' && property.location !== property.name);
 </script>
 
@@ -25,6 +41,12 @@
     <h3 class="name">{property.name || '物件名不明'}</h3>
     <span class="badge" class:ok={property.passed}>{property.passed ? '✓ 合致' : '✗ 除外'}</span>
   </div>
+  {#if origin === 'athome'}
+    <div class="origin">athome 側で登録された物件（条件は未判定）</div>
+  {/if}
+  {#if note}
+    <div class="note">{note}</div>
+  {/if}
 
   <dl class="headline">
     <div class="line">
@@ -53,6 +75,12 @@
           <dt>{field.key}</dt>
           <dd>{field.value}</dd>
         </div>
+        {#if field.key === '接道状況' && roadWidth !== null}
+          <div class="field">
+            <dt>接道幅</dt>
+            <dd class="derived">{roadWidth}m</dd>
+          </div>
+        {/if}
       {/each}
     </dl>
   {/if}
@@ -65,7 +93,28 @@
     </div>
   {/if}
 
-  <a class="link" href={property.url} target="_blank" rel="noopener noreferrer">詳細を見る →</a>
+  <div class="actions">
+    <a class="btn detail" href={property.url} target="_blank" rel="noopener noreferrer">
+      詳細を見る →
+    </a>
+    {#if onfavorite}
+      <button
+        type="button"
+        class="btn star"
+        class:on={favorited}
+        disabled={busy || !favouritable}
+        aria-pressed={favorited}
+        title={!favouritable
+          ? '物件番号を読み取れないため登録できません'
+          : favorited
+            ? 'お気に入りから外す（athome 側も解除します）'
+            : 'お気に入りに入れて、この検索結果から外す'}
+        onclick={onfavorite}
+      >
+        {busy ? '⏳ 通信中…' : favorited ? '★ お気に入り解除' : '☆ お気に入り'}
+      </button>
+    {/if}
+  </div>
 </article>
 
 <style>
@@ -103,6 +152,16 @@
     line-height: 1.5;
     color: var(--agf-text);
     word-break: break-word;
+  }
+  .origin {
+    font-size: 11px;
+    color: var(--agf-muted);
+    line-height: 1.6;
+  }
+  .note {
+    font-size: 11px;
+    color: var(--agf-accent);
+    line-height: 1.6;
   }
   .badge {
     padding: 2px 10px;
@@ -183,19 +242,49 @@
     color: var(--agf-accent);
     font-weight: 600;
   }
-  .link {
-    display: block;
+  .derived {
+    font-weight: 700;
+  }
+  .actions {
+    display: flex;
+    gap: 8px;
     margin-top: 10px;
+  }
+
+  .btn {
+    flex: 1;
+    display: block;
     padding: 7px 12px;
-    background: var(--agf-link);
-    color: #fff;
-    text-decoration: none;
+    border: none;
     border-radius: 6px;
+    text-decoration: none;
     text-align: center;
+    font: inherit;
     font-size: 12px;
     font-weight: 600;
+    color: #fff;
+    cursor: pointer;
   }
-  .link:hover {
+  .detail {
+    background: var(--agf-link);
+  }
+  .detail:hover {
     background: var(--agf-link-dark);
+  }
+  .star {
+    background: #8d8d8d;
+  }
+  .star:hover:not(:disabled) {
+    background: #6f6f6f;
+  }
+  .star.on {
+    background: #e8a317;
+  }
+  .star.on:hover:not(:disabled) {
+    background: #cf9013;
+  }
+  .star:disabled {
+    background: #ccc;
+    cursor: not-allowed;
   }
 </style>

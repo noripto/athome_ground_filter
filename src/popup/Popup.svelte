@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from '../lib/config';
   import { describeActiveFilters } from '../lib/evaluate';
   import { loadResults, loadSettings } from '../lib/storage';
   import type { ResultSet, Settings } from '../lib/types';
@@ -40,12 +41,17 @@
 
   <div class="info">
     {#if settings}
-      <div class="info-line"><span class="key">合致件数</span>{settings.targetCount}件まで</div>
+      <div class="info-line">
+        <span class="key">合致件数</span>
+        {settings.targetCount === 0 ? '全件' : `${countLabel(settings.targetCount)}まで`}
+      </div>
     {/if}
     {#if results}
       <div class="info-line">
         <span class="key">前回の結果</span>
-        合致 {results.passed} / {results.requested}（{results.inspected}件を確認）
+        合致 {results.passed}{results.requested > 0
+          ? ` / ${results.requested}`
+          : ''}（{results.inspected}件を確認）
       </div>
     {/if}
   </div>

@@ -1,127 +1,252 @@
-import { AbortedError, fetchDetail, sleep, streamDetailLinks } from './crawler';
+import { MAX_DETAIL_FETCHES } from './config';
+import {
+  canonicalSearchKey,
+  fetchDetail,
+  newListCrawlReport,
+  streamListings,
+  type ListCrawlReport,
+  type ListingSource
+} from './crawler';
+import { getDetail, isFresh, putDetail, putListing, putSearch } from './db';
 import { describeActiveFilters, evaluate } from './evaluate';
-import type { PropertyResult, ResultSet, Settings, StopReason } from './types';
+import { AbortedError, BlockedError, newPacer, paceDelay, sleep } from './fetcher';
+import type { Detail, Listing, PropertyResult, ResultSet, Settings, StopReason } from './types';
+
+export interface RunTallies {
+  inspected: number;
+  passed: number;
+  excluded: number;
+  failed: number;
+  skipped: number;
+  cached: number;
+  pagesCrawled: number;
+  totalCount: number | null;
+  source: ListingSource | null;
+}
 
 export interface RunProgress {
   phase: 'list' | 'detail' | 'done';
   message: string;
-  /** Passing properties found so far. */
   current: number;
-  /** Passing properties still wanted. */
   total: number;
+  tallies: RunTallies;
 }
 
 export interface RunOptions {
   searchUrl: string;
   settings: Settings;
-  seedLinks?: string[];
   signal?: AbortSignal;
   onProgress?: (progress: RunProgress) => void;
+  onProperty?: (property: PropertyResult) => void;
 }
 
-/**
- * Ceiling on detail pages opened in one run, so that a filter set nothing can
- * satisfy stops instead of walking the entire search.
- */
 export function inspectLimitFor(target: number): number {
+  if (target <= 0) return MAX_DETAIL_FETCHES;
   return Math.min(1200, Math.max(200, target * 10));
 }
 
-function failedResult(url: string): PropertyResult {
+export function resolveStopReason(
+  report: ListCrawlReport,
+  passed: number,
+  target: number,
+  inspected: number,
+  inspectLimit: number
+): StopReason {
+  if (target > 0 && passed >= target) return 'target';
+  if (inspected >= inspectLimit) return 'limit';
+  return report.stoppedBy ?? 'exhausted';
+}
+
+function failedResult(listing: Listing): PropertyResult {
   return {
-    url,
+    url: listing.url,
     passed: false,
     reasons: ['詳細ページの取得に失敗しました'],
-    name: '',
-    price: '',
-    area: '',
-    location: '',
-    traffic: '',
-    fields: {}
+    name: listing.name,
+    price: listing.price,
+    area: listing.area,
+    location: listing.location,
+    traffic: listing.traffic,
+    fields: listing.fields
   };
 }
 
-/**
- * Walks the search results until `settings.targetCount` properties have *passed*
- * the filters — excluded ones do not count towards the goal — and reports
- * progress as it goes. Throws `AbortedError` if `signal` fires.
- */
+function prefilteredResult(listing: Listing, reasons: string[]): PropertyResult {
+  return {
+    url: listing.url,
+    passed: false,
+    reasons,
+    name: listing.name,
+    price: listing.price,
+    area: listing.area,
+    location: listing.location,
+    traffic: listing.traffic,
+    fields: listing.fields
+  };
+}
+
 export async function runFilter(options: RunOptions): Promise<ResultSet> {
-  const { searchUrl, settings, seedLinks, signal, onProgress } = options;
+  const { searchUrl, settings, signal, onProgress, onProperty } = options;
   const target = settings.targetCount;
   const inspectLimit = inspectLimitFor(target);
 
   const properties: PropertyResult[] = [];
-  let pagesCrawled = 0;
+  const report = newListCrawlReport();
+  const pacer = newPacer();
+  const startedAt = Date.now();
+  const searchKey = canonicalSearchKey(searchUrl);
+  const maxAgeMs = settings.detailMaxAgeDays * 24 * 60 * 60 * 1000;
+  const seenIds: string[] = [];
   let inspected = 0;
   let passed = 0;
   let excluded = 0;
   let failed = 0;
+  let skipped = 0;
+  let cached = 0;
 
-  const links = streamDetailLinks({
+  const tallies = (): RunTallies => ({
+    inspected,
+    passed,
+    excluded,
+    failed,
+    skipped,
+    cached,
+    pagesCrawled: report.pagesCrawled,
+    totalCount: report.totalCount,
+    source: report.source
+  });
+
+  const record = (property: PropertyResult): void => {
+    properties.push(property);
+    onProperty?.(property);
+  };
+
+  const listings = streamListings({
     baseUrl: searchUrl,
     delayMs: settings.requestDelayMs,
     signal,
-    seedLinks,
-    onPage: (pages, linksSeen) => {
-      pagesCrawled = pages;
+    pacer,
+    report,
+    onPage: (progress, seen) => {
+      const of = progress.totalCount === null ? '' : ` / 全 ${progress.totalCount}件`;
       onProgress?.({
         phase: 'list',
-        message: `リスト ${pages} ページ目（候補 ${linksSeen}件）`,
+        message: `リスト ${progress.pagesCrawled} ページ目（候補 ${seen}件${of}）`,
         current: passed,
-        total: target
+        total: target,
+        tallies: tallies()
       });
     }
   });
 
-  for await (const url of links) {
-    if (signal?.aborted) throw new AbortedError();
-    if (passed >= target || inspected >= inspectLimit) break;
-    if (inspected > 0) await sleep(settings.requestDelayMs);
+  try {
+    for await (const listing of listings) {
+      if (signal?.aborted) throw new AbortedError();
+      if (target > 0 && passed >= target) break;
+      if (inspected >= inspectLimit) break;
 
-    inspected++;
-    onProgress?.({
-      phase: 'detail',
-      message: `合致 ${passed} / ${target}件（${inspected}件目を確認中）`,
-      current: passed,
-      total: target
-    });
+      seenIds.push(listing.id);
+      void putListing({ ...listing, seenAt: startedAt });
 
-    const detail = await fetchDetail(url, signal);
-    if (!detail) {
-      failed++;
-      properties.push(failedResult(url));
-      continue;
+      const cardReasons = evaluate(settings.filters, listing.fields, { presentFieldsOnly: true });
+      if (cardReasons.length > 0) {
+        excluded++;
+        skipped++;
+        record(prefilteredResult(listing, cardReasons));
+        continue;
+      }
+
+      const stored = await getDetail(listing.id);
+      let detail: Detail | null = isFresh(stored, startedAt, maxAgeMs) ? (stored ?? null) : null;
+
+      if (detail) {
+        cached++;
+      } else {
+        if (inspected > 0)
+          await sleep(paceDelay(settings.requestDelayMs, pacer.cooldownMs), signal);
+
+        inspected++;
+        onProgress?.({
+          phase: 'detail',
+          message:
+            target > 0
+              ? `合致 ${passed} / ${target}件（${inspected}件目を取得中、キャッシュ ${cached}件）`
+              : `合致 ${passed}件（${inspected}件目を取得中、キャッシュ ${cached}件）`,
+          current: passed,
+          total: target,
+          tallies: tallies()
+        });
+
+        const fetched = await fetchDetail(listing.url, signal, pacer);
+        if (!fetched) {
+          failed++;
+          record(failedResult(listing));
+          continue;
+        }
+
+        detail = { id: listing.id, fetchedAt: Date.now(), ...fetched };
+        void putDetail(detail);
+      }
+
+      const reasons = evaluate(settings.filters, detail.fields);
+      if (reasons.length === 0) passed++;
+      else excluded++;
+      record({
+        url: listing.url,
+        passed: reasons.length === 0,
+        reasons,
+        name: detail.name,
+        price: detail.price,
+        area: detail.area,
+        location: detail.location,
+        traffic: detail.traffic,
+        fields: detail.fields
+      });
     }
-
-    const reasons = evaluate(settings.filters, detail.fields);
-    if (reasons.length === 0) passed++;
-    else excluded++;
-    properties.push({ url, passed: reasons.length === 0, reasons, ...detail });
+  } catch (err) {
+    if (err instanceof AbortedError) report.stoppedBy = 'aborted';
+    else if (err instanceof BlockedError) report.stoppedBy = 'blocked';
+    else throw err;
   }
 
-  const stoppedBy: StopReason =
-    passed >= target ? 'target' : inspected >= inspectLimit ? 'limit' : 'exhausted';
+  const stoppedBy = resolveStopReason(report, passed, target, inspected, inspectLimit);
+
+  await putSearch({
+    searchKey,
+    searchUrl,
+    totalCount: report.totalCount,
+    pagesCrawled: report.pagesCrawled,
+    listingIds: seenIds,
+    startedAt,
+    updatedAt: Date.now(),
+    finishedAt: Date.now(),
+    stoppedBy
+  });
 
   onProgress?.({
     phase: 'done',
-    message: `完了 — 合致 ${passed}件（${inspected}件を確認）`,
+    message: `完了 — 合致 ${passed}件（取得 ${inspected}件、キャッシュ ${cached}件）`,
     current: passed,
-    total: target
+    total: target,
+    tallies: tallies()
   });
 
   return {
     timestamp: Date.now(),
     searchUrl,
     requested: target,
+    totalCount: report.totalCount,
     inspected,
     passed,
     excluded,
     failed,
-    pagesCrawled,
+    skipped,
+    cached,
+    pagesCrawled: report.pagesCrawled,
     stoppedBy,
     inspectLimit,
     activeFilters: describeActiveFilters(settings.filters),
+    source: report.source,
     properties: settings.keepExcluded ? properties : properties.filter(p => p.passed)
   };
 }
