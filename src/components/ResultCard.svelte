@@ -12,6 +12,8 @@
     favouritable?: boolean;
     note?: string;
     origin?: 'extension' | 'athome';
+    resolved?: boolean;
+    onrestore?: () => void;
   }
 
   let {
@@ -22,7 +24,9 @@
     busy = false,
     favouritable = true,
     note = '',
-    origin = undefined
+    origin = undefined,
+    resolved = true,
+    onrestore
   }: Props = $props();
 
   const shownFields = $derived(
@@ -50,8 +54,17 @@
     <h3 class="name">{property.name || '物件名不明'}</h3>
     <span class="badge" class:ok={property.passed}>{property.passed ? '✓ 合致' : '✗ 除外'}</span>
   </div>
-  {#if origin === 'athome'}
-    <div class="origin">athome 側で登録された物件（条件は未判定）</div>
+  {#if origin === 'athome' && !resolved}
+    <div class="origin">
+      athome 側で登録された物件（詳細未取得・条件は未判定）
+      {#if onrestore}
+        <button type="button" class="restore" disabled={busy} onclick={onrestore}>
+          {busy ? '取得中…' : '詳細を読む'}
+        </button>
+      {/if}
+    </div>
+  {:else if origin === 'athome'}
+    <div class="origin">athome 側で登録された物件</div>
   {/if}
   {#if note}
     <div class="note">{note}</div>
@@ -172,6 +185,23 @@
     font-size: 11px;
     color: var(--agf-muted);
     line-height: 1.6;
+  }
+  .restore {
+    margin-left: 6px;
+    padding: 2px 8px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: #f8f8f8;
+    font: inherit;
+    font-size: 11px;
+    color: #555;
+    cursor: pointer;
+  }
+  .restore:hover:not(:disabled) {
+    background: #eee;
+  }
+  .restore:disabled {
+    cursor: progress;
   }
   .note {
     font-size: 11px;

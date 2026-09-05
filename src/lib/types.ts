@@ -120,6 +120,7 @@ export interface Favorite {
   addedAt: number;
   property: PropertyResult;
   origin?: 'extension' | 'athome';
+  detailAt?: number;
   remote: RemoteState;
   remoteNote: string;
 }
