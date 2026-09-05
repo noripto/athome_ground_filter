@@ -16,16 +16,28 @@
 
   interface Props {
     results: ResultSet;
+    /** The run is still going and these results are still growing. */
+    live?: boolean;
     /** Rendered when the view lives in a dismissable overlay. */
     onclose?: () => void;
   }
 
-  let { results, onclose }: Props = $props();
+  let { results, live = false, onclose }: Props = $props();
 
   let tab = $state<Tab>('ok');
   let sortIndex = $state(0);
   let refilterOpen = $state(false);
   let view = $state<ViewFilter>(emptyViewFilter());
+
+  /**
+   * How many cards get built at once. A whole search runs to thousands, and
+   * putting all of them in the DOM makes scrolling crawl — the worse for a live
+   * run, which would pay that cost again every time the results grow.
+   */
+  const PAGE = 300;
+  let shown = $state(PAGE);
+  /** Bumped whenever the re-filter changes, which `viewKey` cannot see. */
+  let refilterSerial = $state(0);
 
   /**
    * Conditions the user has changed since the run. `evaluate` only ever read a
@@ -48,6 +60,30 @@
 
   const visible = $derived(sortProperties(applyViewFilter(byTab, view), SORT_OPTIONS[sortIndex]));
 
+  // Looking at a different set of properties means starting from the top of
+  // it again. A live run growing the same set does not, or the button the user
+  // just pressed would undo itself half a second later.
+  const viewKey = $derived(
+    [
+      tab,
+      sortIndex,
+      refilterSerial,
+      view.keyword,
+      view.minPriceMan,
+      view.maxPriceMan,
+      view.minAreaSqm,
+      view.maxAreaSqm,
+      view.maxWalkMinutes
+    ].join('|')
+  );
+  $effect(() => {
+    void viewKey;
+    shown = PAGE;
+  });
+
+  const rendered = $derived(visible.slice(0, shown));
+  const remaining = $derived(visible.length - rendered.length);
+
   const narrowed = $derived(isViewFilterActive(view) || liveFilters !== null);
   const passedNow = $derived(judged.filter(p => p.passed).length);
 
@@ -59,20 +95,41 @@
 
   function applyFilters(next: Settings) {
     liveFilters = next.filters;
+    refilterSerial++;
     refilterOpen = false;
   }
 
   function resetView() {
     view = emptyViewFilter();
     liveFilters = null;
+    refilterSerial++;
   }
 
   const crawledAt = $derived(new Date(results.timestamp).toLocaleString('ja-JP'));
+
+  /**
+   * Which reading of the list pages the run ended up on. Falling back loses
+   * fields, and with them the chance to rule properties out before their detail
+   * page is opened, so it should not happen quietly.
+   */
+  const sourceNote = $derived.by(() => {
+    switch (results.source) {
+      case 'state':
+        return '一覧の取得元: athome の埋め込みデータ';
+      case 'cards':
+        return '⚠ 一覧の取得元: カードのHTML（埋め込みデータを読めず、一部の条件を一覧で判定できません）';
+      case 'links':
+        return '⚠ 一覧の取得元: リンクのみ（一覧では何も判定できず、全件の詳細ページを取得します）';
+      default:
+        return '';
+    }
+  });
 
   // Only worth saying something when the run ended somewhere other than where
   // it meant to. Anything but 'target' and 'complete' is worth explaining, and
   // several of these used to be reported as「検索結果が尽きました」.
   const stopNote = $derived.by(() => {
+    if (live) return '';
     switch (results.stoppedBy) {
       case 'target':
       case 'complete':
@@ -100,7 +157,7 @@
 <div class="view">
   <header class="head">
     <div class="head-main">
-      <h1>🏗 土地フィルター 結果</h1>
+      <h1>{live ? '🏗 土地フィルター 取得中…' : '🏗 土地フィルター 結果'}</h1>
       <div class="stats">
         <span class="stat ok">
           ✓ 合致 {results.passed}{results.requested > 0 ? ` / 指定 ${results.requested}` : ''}件
@@ -125,7 +182,14 @@
       {#if stopNote}
         <div class="meta warn">{stopNote}</div>
       {/if}
-      <div class="meta">取得日時: {crawledAt}</div>
+      {#if live}
+        <div class="meta">取得しながら表示しています。中断してもここまでの結果は残ります。</div>
+      {:else}
+        <div class="meta">取得日時: {crawledAt}</div>
+      {/if}
+      {#if sourceNote}
+        <div class="meta" class:warn={results.source !== 'state'}>{sourceNote}</div>
+      {/if}
       {#if results.activeFilters.length}
         <div class="meta">適用条件: {results.activeFilters.join(' ／ ')}</div>
       {:else}
@@ -170,7 +234,7 @@
     </button>
 
     <span class="count">
-      {visible.length}件表示{narrowed ? `（合致 ${passedNow}件）` : ''}
+      {rendered.length}/{visible.length}件表示{narrowed ? `（合致 ${passedNow}件）` : ''}
     </span>
   </div>
 
@@ -256,10 +320,17 @@
       <p class="empty">該当する物件がありません。</p>
     {:else}
       <div class="grid">
-        {#each visible as property (property.url)}
+        {#each rendered as property (property.url)}
           <ResultCard {property} />
         {/each}
       </div>
+      {#if remaining > 0}
+        <div class="more">
+          <button type="button" class="agf-btn" onclick={() => (shown += PAGE)}>
+            さらに {Math.min(PAGE, remaining)}件表示（残り {remaining}件）
+          </button>
+        </div>
+      {/if}
     {/if}
   </div>
 </div>
@@ -396,6 +467,11 @@
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
     gap: 16px;
+  }
+  .more {
+    display: flex;
+    justify-content: center;
+    padding: 24px 0 4px;
   }
   .empty {
     color: var(--agf-muted);

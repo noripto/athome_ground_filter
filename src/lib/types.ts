@@ -195,5 +195,10 @@ export interface ResultSet {
   /** The cap on inspected properties that applied to this run. */
   inspectLimit: number;
   activeFilters: string[];
+  /**
+   * Where the list pages were read from, at their poorest. Absent on results
+   * stored before this was recorded.
+   */
+  source?: 'state' | 'cards' | 'links' | null;
   properties: PropertyResult[];
 }

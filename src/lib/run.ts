@@ -4,12 +4,30 @@ import {
   fetchDetail,
   newListCrawlReport,
   streamListings,
-  type ListCrawlReport
+  type ListCrawlReport,
+  type ListingSource
 } from './crawler';
 import { getDetail, isFresh, putDetail, putListing, putSearch } from './db';
 import { describeActiveFilters, evaluate } from './evaluate';
 import { AbortedError, BlockedError, newPacer, paceDelay, sleep } from './fetcher';
 import type { Detail, Listing, PropertyResult, ResultSet, Settings, StopReason } from './types';
+
+/**
+ * The counts a run keeps as it goes. A crawl of a whole search takes long
+ * enough that the caller has to be able to show a result set before it ends,
+ * which means it needs these while they are still moving.
+ */
+export interface RunTallies {
+  inspected: number;
+  passed: number;
+  excluded: number;
+  failed: number;
+  skipped: number;
+  cached: number;
+  pagesCrawled: number;
+  totalCount: number | null;
+  source: ListingSource | null;
+}
 
 export interface RunProgress {
   phase: 'list' | 'detail' | 'done';
@@ -18,6 +36,7 @@ export interface RunProgress {
   current: number;
   /** Passing properties still wanted. */
   total: number;
+  tallies: RunTallies;
 }
 
 export interface RunOptions {
@@ -25,6 +44,8 @@ export interface RunOptions {
   settings: Settings;
   signal?: AbortSignal;
   onProgress?: (progress: RunProgress) => void;
+  /** Called as each property is settled, so results can be shown live. */
+  onProperty?: (property: PropertyResult) => void;
 }
 
 /**
@@ -93,7 +114,7 @@ function prefilteredResult(listing: Listing, reasons: string[]): PropertyResult 
  * `signal` ends the run and returns what it has, rather than failing.
  */
 export async function runFilter(options: RunOptions): Promise<ResultSet> {
-  const { searchUrl, settings, signal, onProgress } = options;
+  const { searchUrl, settings, signal, onProgress, onProperty } = options;
   const target = settings.targetCount;
   const inspectLimit = inspectLimitFor(target);
 
@@ -114,6 +135,24 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
   let skipped = 0;
   let cached = 0;
 
+  const tallies = (): RunTallies => ({
+    inspected,
+    passed,
+    excluded,
+    failed,
+    skipped,
+    cached,
+    pagesCrawled: report.pagesCrawled,
+    totalCount: report.totalCount,
+    source: report.source
+  });
+
+  /** Every settled property goes through here, so the caller sees each one. */
+  const record = (property: PropertyResult): void => {
+    properties.push(property);
+    onProperty?.(property);
+  };
+
   const listings = streamListings({
     baseUrl: searchUrl,
     delayMs: settings.requestDelayMs,
@@ -126,7 +165,8 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
         phase: 'list',
         message: `リスト ${progress.pagesCrawled} ページ目（候補 ${seen}件${of}）`,
         current: passed,
-        total: target
+        total: target,
+        tallies: tallies()
       });
     }
   });
@@ -146,7 +186,7 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
       if (cardReasons.length > 0) {
         excluded++;
         skipped++;
-        properties.push(prefilteredResult(listing, cardReasons));
+        record(prefilteredResult(listing, cardReasons));
         continue;
       }
 
@@ -170,13 +210,14 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
               ? `合致 ${passed} / ${target}件（${inspected}件目を取得中、キャッシュ ${cached}件）`
               : `合致 ${passed}件（${inspected}件目を取得中、キャッシュ ${cached}件）`,
           current: passed,
-          total: target
+          total: target,
+          tallies: tallies()
         });
 
         const fetched = await fetchDetail(listing.url, signal, pacer);
         if (!fetched) {
           failed++;
-          properties.push(failedResult(listing));
+          record(failedResult(listing));
           continue;
         }
 
@@ -187,7 +228,7 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
       const reasons = evaluate(settings.filters, detail.fields);
       if (reasons.length === 0) passed++;
       else excluded++;
-      properties.push({
+      record({
         url: listing.url,
         passed: reasons.length === 0,
         reasons,
@@ -227,7 +268,8 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
     phase: 'done',
     message: `完了 — 合致 ${passed}件（取得 ${inspected}件、キャッシュ ${cached}件）`,
     current: passed,
-    total: target
+    total: target,
+    tallies: tallies()
   });
 
   return {
@@ -245,6 +287,7 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
     stoppedBy,
     inspectLimit,
     activeFilters: describeActiveFilters(settings.filters),
+    source: report.source,
     properties: settings.keepExcluded ? properties : properties.filter(p => p.passed)
   };
 }

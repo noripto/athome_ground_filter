@@ -1,9 +1,10 @@
 <script lang="ts">
   import ResultsView from '../components/ResultsView.svelte';
   import RunPanel from './RunPanel.svelte';
-  import { runFilter, type RunProgress } from '../lib/run';
+  import { describeActiveFilters } from '../lib/evaluate';
+  import { inspectLimitFor, runFilter, type RunProgress, type RunTallies } from '../lib/run';
   import { loadResults, loadSettings, saveResults } from '../lib/storage';
-  import type { ResultSet, Settings } from '../lib/types';
+  import type { PropertyResult, ResultSet, Settings } from '../lib/types';
 
   /**
    * The crawl lives here rather than in the content script. This tab outlives
@@ -24,6 +25,67 @@
   let error = $state('');
   let controller: AbortController | null = null;
 
+  /**
+   * Results arriving mid-run are collected in a plain array and copied into
+   * state on a timer. A run turns up thousands of properties, and pushing each
+   * one straight into `$state` would re-derive the sort, the tab split and the
+   * view filter once per property.
+   */
+  const SNAPSHOT_MS = 500;
+  const EMPTY_TALLIES: RunTallies = {
+    inspected: 0,
+    passed: 0,
+    excluded: 0,
+    failed: 0,
+    skipped: 0,
+    cached: 0,
+    pagesCrawled: 0,
+    totalCount: null,
+    source: null
+  };
+  let pending: PropertyResult[] = [];
+  let livePassed = $state<PropertyResult[]>([]);
+  let liveTallies = $state<RunTallies | null>(null);
+  let snapshots: ReturnType<typeof setInterval> | null = null;
+
+  /**
+   * What the finished run would return if it stopped right now, so the results
+   * view can render the same way whether the crawl is still going or over.
+   */
+  const liveResults = $derived.by<ResultSet | null>(() => {
+    if (!settings) return null;
+    // Zeroes until the first list page lands, so the run has something to show
+    // from the moment it starts rather than a blank page for the first fetch.
+    const t = liveTallies ?? EMPTY_TALLIES;
+    return {
+      timestamp: Date.now(),
+      searchUrl,
+      requested: settings.targetCount,
+      totalCount: t.totalCount,
+      inspected: t.inspected,
+      passed: t.passed,
+      excluded: t.excluded,
+      failed: t.failed,
+      skipped: t.skipped,
+      cached: t.cached,
+      pagesCrawled: t.pagesCrawled,
+      stoppedBy: 'complete',
+      inspectLimit: inspectLimitFor(settings.targetCount),
+      activeFilters: describeActiveFilters(settings.filters),
+      source: t.source,
+      properties: livePassed
+    };
+  });
+
+  // A run in progress shows itself; anything else shows the last finished run.
+  const shownResults = $derived(running ? liveResults : results);
+
+  function snapshot() {
+    if (pending.length === 0) return;
+    livePassed = [...livePassed, ...pending];
+    pending = [];
+  }
+
   Promise.all([loadSettings(), loadResults()]).then(([loadedSettings, stored]) => {
     settings = loadedSettings;
     results = stored;
@@ -43,12 +105,17 @@
   async function run() {
     if (!settings || running || !searchUrl) return;
 
+    const keepExcluded = settings.keepExcluded;
+
     running = true;
     error = '';
-    results = null;
     progress = null;
+    pending = [];
+    livePassed = [];
+    liveTallies = null;
     status = '検索結果を読み取り中…';
     controller = new AbortController();
+    snapshots = setInterval(snapshot, SNAPSHOT_MS);
 
     try {
       const resultSet = await runFilter({
@@ -58,6 +125,10 @@
         onProgress: next => {
           progress = next;
           status = next.message;
+          liveTallies = next.tallies;
+        },
+        onProperty: property => {
+          if (keepExcluded || property.passed) pending.push(property);
         }
       });
 
@@ -70,6 +141,11 @@
       error = err instanceof Error ? err.message : String(err);
       console.error('[AGF]', err);
     } finally {
+      if (snapshots !== null) clearInterval(snapshots);
+      snapshots = null;
+      // Whatever a cancelled or failed run had already found still gets shown,
+      // through `liveResults`, so the last few properties belong in there too.
+      snapshot();
       running = false;
       controller = null;
     }
@@ -97,8 +173,8 @@
     />
   {/if}
 
-  {#if results}
-    <ResultsView {results} />
+  {#if shownResults}
+    <ResultsView results={shownResults} live={running} />
   {:else if !searchUrl}
     <p class="msg">
       まだ結果がありません。<br />
