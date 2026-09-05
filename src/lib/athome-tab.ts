@@ -7,7 +7,7 @@
  * the answer for the rest of the session.
  */
 
-import { FAVORITE, PING, type FavoriteReply } from './messages';
+import { FAVORITE, PING, UNFAVORITE, type FavoriteReply } from './messages';
 
 /** Must stay in step with `content_scripts.matches` in the manifest. */
 const CONTENT_SCRIPT_MATCH = 'https://www.athome.co.jp/tochi/*/list/*';
@@ -15,6 +15,14 @@ const CONTENT_SCRIPT_MATCH = 'https://www.athome.co.jp/tochi/*/list/*';
 /** How long a freshly opened tab is given to run its content script. */
 const READY_TIMEOUT_MS = 20_000;
 const READY_POLL_MS = 400;
+
+/**
+ * How long one post may take before it is called a failure. A content script
+ * that recognises no listener for a message never answers, and nothing else
+ * gives up on our behalf — which is how a guard that rejected the removal
+ * message showed up as a button stuck on「通信中」rather than as an error.
+ */
+const REPLY_TIMEOUT_MS = 30_000;
 
 let known: number | null = null;
 
@@ -68,12 +76,36 @@ export async function athomeTab(searchUrl: string): Promise<number> {
   return known;
 }
 
-/** Registers one property on athome, through whatever tab is available. */
-export async function sendFavorite(id: string, searchUrl: string): Promise<FavoriteReply> {
+/**
+ * Registers or removes one property on athome, through whatever tab is
+ * available. A failure here is reported rather than thrown: the caller has
+ * already saved the user's own mark and only needs to say what athome did.
+ */
+function timeout(): Promise<never> {
+  return new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('応答がありません（30秒）')), REPLY_TIMEOUT_MS)
+  );
+}
+
+async function send(
+  type: typeof FAVORITE | typeof UNFAVORITE,
+  id: string,
+  searchUrl: string
+): Promise<FavoriteReply> {
   try {
     const tabId = await athomeTab(searchUrl);
-    return await chrome.tabs.sendMessage(tabId, { type: FAVORITE, id });
+    const reply = await Promise.race([
+      chrome.tabs.sendMessage(tabId, { type, id }) as Promise<FavoriteReply | undefined>,
+      timeout()
+    ]);
+    // An undefined reply is a content script that took the message and never
+    // answered — an older build in a tab that has not been reloaded, usually.
+    if (!reply)
+      throw new Error('athome のタブが応答しませんでした（タブを再読み込みしてください）');
+    return reply;
   } catch (err) {
+    // Whatever tab was in use is gone or unreachable. Forgetting it means the
+    // next property looks for another one instead of failing the same way.
     known = null;
     return {
       ok: false,
@@ -82,4 +114,12 @@ export async function sendFavorite(id: string, searchUrl: string): Promise<Favor
       error: err instanceof Error ? err.message : String(err)
     };
   }
+}
+
+export function sendFavorite(id: string, searchUrl: string): Promise<FavoriteReply> {
+  return send(FAVORITE, id, searchUrl);
+}
+
+export function sendUnfavorite(id: string, searchUrl: string): Promise<FavoriteReply> {
+  return send(UNFAVORITE, id, searchUrl);
 }

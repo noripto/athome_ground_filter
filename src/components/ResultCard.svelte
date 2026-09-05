@@ -11,6 +11,8 @@
     favorited?: boolean;
     /** The registration is in flight, so the button should not fire twice. */
     busy?: boolean;
+    /** False when the property number could not be read out of the URL. */
+    favouritable?: boolean;
     /** Why athome refused this one, when it did. */
     note?: string;
   }
@@ -21,6 +23,7 @@
     onfavorite,
     favorited = false,
     busy = false,
+    favouritable = true,
     note = ''
   }: Props = $props();
 
@@ -37,17 +40,6 @@
 <article class="card" class:ok={property.passed} class:ng={!property.passed}>
   <div class="top">
     <h3 class="name">{property.name || '物件名不明'}</h3>
-    {#if onfavorite}
-      <button
-        type="button"
-        class="star"
-        class:on={favorited}
-        disabled={busy}
-        title={favorited ? 'お気に入りから外す' : 'お気に入りに入れて検索結果から外す'}
-        aria-pressed={favorited}
-        onclick={onfavorite}>{busy ? '…' : favorited ? '★' : '☆'}</button
-      >
-    {/if}
     <span class="badge" class:ok={property.passed}>{property.passed ? '✓ 合致' : '✗ 除外'}</span>
   </div>
   {#if note}
@@ -93,7 +85,28 @@
     </div>
   {/if}
 
-  <a class="link" href={property.url} target="_blank" rel="noopener noreferrer">詳細を見る →</a>
+  <div class="actions">
+    <a class="btn detail" href={property.url} target="_blank" rel="noopener noreferrer">
+      詳細を見る →
+    </a>
+    {#if onfavorite}
+      <button
+        type="button"
+        class="btn star"
+        class:on={favorited}
+        disabled={busy || !favouritable}
+        aria-pressed={favorited}
+        title={!favouritable
+          ? '物件番号を読み取れないため登録できません'
+          : favorited
+            ? 'お気に入りから外す（athome 側も解除します）'
+            : 'お気に入りに入れて、この検索結果から外す'}
+        onclick={onfavorite}
+      >
+        {busy ? '⏳ 通信中…' : favorited ? '★ お気に入り解除' : '☆ お気に入り'}
+      </button>
+    {/if}
+  </div>
 </article>
 
 <style>
@@ -131,25 +144,6 @@
     line-height: 1.5;
     color: var(--agf-text);
     word-break: break-word;
-  }
-  .star {
-    border: none;
-    background: none;
-    cursor: pointer;
-    padding: 0 2px;
-    font-size: 19px;
-    line-height: 1;
-    color: var(--agf-faint);
-    flex-shrink: 0;
-  }
-  .star.on {
-    color: #e8a317;
-  }
-  .star:hover:not(:disabled) {
-    color: #e8a317;
-  }
-  .star:disabled {
-    cursor: progress;
   }
   .note {
     font-size: 11px;
@@ -235,19 +229,46 @@
     color: var(--agf-accent);
     font-weight: 600;
   }
-  .link {
-    display: block;
+  .actions {
+    display: flex;
+    gap: 8px;
     margin-top: 10px;
+  }
+  /* Both halves are the same control to the eye, so they are one rule. */
+  .btn {
+    flex: 1;
+    display: block;
     padding: 7px 12px;
-    background: var(--agf-link);
-    color: #fff;
-    text-decoration: none;
+    border: none;
     border-radius: 6px;
+    text-decoration: none;
     text-align: center;
+    font: inherit;
     font-size: 12px;
     font-weight: 600;
+    color: #fff;
+    cursor: pointer;
   }
-  .link:hover {
+  .detail {
+    background: var(--agf-link);
+  }
+  .detail:hover {
     background: var(--agf-link-dark);
+  }
+  .star {
+    background: #8d8d8d;
+  }
+  .star:hover:not(:disabled) {
+    background: #6f6f6f;
+  }
+  .star.on {
+    background: #e8a317;
+  }
+  .star.on:hover:not(:disabled) {
+    background: #cf9013;
+  }
+  .star:disabled {
+    background: #ccc;
+    cursor: not-allowed;
   }
 </style>

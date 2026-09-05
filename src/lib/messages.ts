@@ -8,13 +8,14 @@
 
 export const PING = 'agf-ping';
 export const FAVORITE = 'agf-favorite';
+export const UNFAVORITE = 'agf-unfavorite';
 
 export interface PingMessage {
   type: typeof PING;
 }
 
 export interface FavoriteMessage {
-  type: typeof FAVORITE;
+  type: typeof FAVORITE | typeof UNFAVORITE;
   /** The property number, which is athome's BUKKEN. */
   id: string;
 }
@@ -43,6 +44,8 @@ export function isPing(value: unknown): value is PingMessage {
 
 export function isFavoriteMessage(value: unknown): value is FavoriteMessage {
   return (
-    tagged(value) && value.type === FAVORITE && typeof (value as FavoriteMessage).id === 'string'
+    tagged(value) &&
+    (value.type === FAVORITE || value.type === UNFAVORITE) &&
+    typeof (value as FavoriteMessage).id === 'string'
   );
 }

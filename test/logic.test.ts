@@ -5,7 +5,7 @@
  */
 import { buildPageUrl, canonicalSearchKey, expectedPages } from '../src/lib/crawler';
 import { isFresh } from '../src/lib/db';
-import { favoriteBody, isFavouritable } from '../src/lib/favorite';
+import { favoriteBody, isFavouritable, unfavoriteBody } from '../src/lib/favorite';
 import {
   parseAreaSqm,
   parsePriceMan,
@@ -669,6 +669,16 @@ eq(
   eq('物件番号でないものは弾く', isFavouritable('ks14392386'), false);
   eq('空文字も弾く', isFavouritable(''), false);
   eq('数字の物件番号は通る', isFavouritable('3923866001'), true);
+
+  const del = new URLSearchParams(unfavoriteBody('3923328901'));
+  eq('解除も同じ物件番号で引く', del.get('BUKKEN'), '3923328901');
+  eq('ITEMART は ITEM と ART の連結', del.get('ITEMART'), 'ks14');
+  eq('削除フラグが立つ', del.get('DELFLG'), '1');
+  eq(
+    '解除も athome 自身の並び順で送る',
+    unfavoriteBody('3923328901'),
+    'DELFLG=1&TAB_CODE=2030&SORT=32&BUKKEN=3923328901&ITEMART=ks14'
+  );
 
   let threw = false;
   try {

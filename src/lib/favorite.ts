@@ -11,6 +11,9 @@
 
 export const FAVORITE_URL = 'https://www.athome.co.jp/simple_favorite/regist';
 
+/** Removal is a different endpoint, and a different shape, from registration. */
+export const UNFAVORITE_URL = 'https://www.athome.co.jp/personal/favoriteajax/';
+
 /**
  * Both are constants for land. athome's own 閲覧履歴 cookie stores every 土地
  * as `ks14` followed by the ten-digit property number, and this extension only
@@ -26,6 +29,15 @@ const SITECD = '00000';
 
 /** Where the click came from, which athome records for its own reporting. */
 const SREF = 'list_simple';
+
+/**
+ * The favourite page's own view state, which its removal request carries along
+ * — 2030 is its 土地 tab and 32 the sort it was on. Only `BUKKEN` and
+ * `ITEMART` identify the property, so if athome ever objects to these, they are
+ * the two to look at first.
+ */
+const TAB_CODE = '2030';
+const TAB_SORT = '32';
 
 /** A property number is all digits — the same string `Listing.id` holds. */
 const BUKKEN_RE = /^\d{7,}$/;
@@ -51,6 +63,22 @@ export function favoriteBody(id: string): string {
   }).toString();
 }
 
+/**
+ * The removal body. `ITEMART` is the same two constants the registration sends
+ * separately, run together — which is the site's own confirmation that neither
+ * varies per property.
+ */
+export function unfavoriteBody(id: string): string {
+  if (!isFavouritable(id)) throw new Error(`お気に入りから外せない物件番号です: ${id}`);
+  return new URLSearchParams({
+    DELFLG: '1',
+    TAB_CODE,
+    SORT: TAB_SORT,
+    BUKKEN: id,
+    ITEMART: `${ITEM}${ART}`
+  }).toString();
+}
+
 export interface FavoriteOutcome {
   ok: boolean;
   status: number;
@@ -72,6 +100,28 @@ export async function postFavorite(id: string): Promise<FavoriteOutcome> {
       Accept: 'application/json, text/plain, */*'
     },
     body: favoriteBody(id)
+  });
+
+  return { ok: res.ok, status: res.status, body: (await res.text()).slice(0, 400) };
+}
+
+/**
+ * Removes one property. Must run in a page on athome.co.jp, like the
+ * registration. athome's own request carries a referrer of the favourite page,
+ * which cannot be reproduced here — `Referer` is a forbidden header and the
+ * `referrer` option is not honoured for a content script's fetch. Registration
+ * went through without one, so this does not try to fake it either.
+ */
+export async function postUnfavorite(id: string): Promise<FavoriteOutcome> {
+  const res = await fetch(UNFAVORITE_URL, {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+      Accept: 'text/html, */*; q=0.01',
+      'X-Requested-With': 'XMLHttpRequest'
+    },
+    body: unfavoriteBody(id)
   });
 
   return { ok: res.ok, status: res.status, body: (await res.text()).slice(0, 400) };

@@ -10,7 +10,7 @@
     sortProperties,
     type ViewFilter
   } from '../lib/view';
-  import { sendFavorite } from '../lib/athome-tab';
+  import { sendFavorite, sendUnfavorite } from '../lib/athome-tab';
   import { deleteFavorite, listFavorites, putFavorite } from '../lib/db';
   import { isFavouritable } from '../lib/favorite';
   import { detailIdFromUrl } from '../lib/markup';
@@ -126,8 +126,30 @@
   ]);
 
   function noteFor(id: string): string {
-    const entry = favorites.find(f => f.id === id);
-    return entry && entry.remote === 'failed' ? `⚠ athome への登録に失敗: ${entry.remoteNote}` : '';
+    return favorites.find(f => f.id === id)?.remoteNote ?? '';
+  }
+
+  function why(reply: { error: string; status: number; body: string }): string {
+    return reply.error || `HTTP ${reply.status} ${reply.body}`.trim();
+  }
+
+  /**
+   * Writes one entry to both the store and the list. Everything read back out
+   * of `favorites` is a state proxy, and IndexedDB cannot clone a proxy, so the
+   * snapshot is not a nicety — without it every write after the first throws.
+   */
+  async function remember(entry: Favorite): Promise<void> {
+    const plain = $state.snapshot(entry) as Favorite;
+    await putFavorite(plain);
+    favorites = favorites.some(f => f.id === plain.id)
+      ? favorites.map(f => (f.id === plain.id ? plain : f))
+      : [plain, ...favorites];
+  }
+
+  /** Keeps the star and says what went wrong, rather than failing silently. */
+  async function fail(entry: Favorite, note: string): Promise<void> {
+    console.warn('[AGF]', note);
+    await remember({ ...$state.snapshot(entry), remoteNote: note } as Favorite);
   }
 
   const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -151,38 +173,63 @@
     };
 
     try {
-      await putFavorite(entry);
-      favorites = [entry, ...favorites];
+      await remember(entry);
 
-      if (isFavouritable(id)) {
-        const reply = await sendFavorite(id, results.searchUrl);
-        entry.remote = reply.ok ? 'ok' : 'failed';
-        entry.remoteNote = reply.ok ? '' : reply.error || `HTTP ${reply.status} ${reply.body}`;
-      } else {
-        entry.remote = 'failed';
-        entry.remoteNote = '物件番号を読み取れませんでした';
+      if (!isFavouritable(id)) {
+        await fail(entry, '⚠ 物件番号を読み取れませんでした');
+        return;
       }
 
-      await putFavorite(entry);
-      favorites = favorites.map(f => (f.id === id ? entry : f));
+      const reply = await sendFavorite(id, results.searchUrl);
+      if (reply.ok) await remember({ ...entry, remote: 'ok', remoteNote: '' });
+      else {
+        await remember({ ...entry, remote: 'failed' });
+        await fail(entry, `⚠ athome への登録に失敗: ${why(reply)}`);
+      }
+    } catch (err) {
+      await fail(entry, `⚠ 登録できませんでした: ${err instanceof Error ? err.message : err}`);
     } finally {
       pending = pending.filter(other => other !== id);
     }
   }
 
   /**
-   * Local only. athome's own removal request has not been observed yet, so the
-   * star goes but whatever is on athome stays — said plainly rather than
-   * guessed at, because guessing means posting an unknown write.
+   * athome first, then the local copy. The star means「athome にも入っている」,
+   * so dropping it while athome still holds the property would leave the user
+   * with no way to find it again — the failure is kept visible instead.
    */
   async function unstar(id: string): Promise<void> {
-    await deleteFavorite(id);
-    favorites = favorites.filter(entry => entry.id !== id);
+    const entry = favorites.find(f => f.id === id);
+    if (!entry || pending.includes(id)) return;
+
+    pending = [...pending, id];
+    try {
+      // Never registered, so there is nothing on athome's side to remove.
+      if (entry.remote === 'ok') {
+        const reply = await sendUnfavorite(id, results.searchUrl);
+        if (!reply.ok) {
+          await fail(entry, `⚠ athome からの解除に失敗: ${why(reply)}`);
+          return;
+        }
+      }
+
+      await deleteFavorite(id);
+      favorites = favorites.filter(f => f.id !== id);
+    } catch (err) {
+      await fail(entry, `⚠ 解除できませんでした: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      pending = pending.filter(other => other !== id);
+    }
   }
 
   function toggleStar(property: PropertyResult): void {
     const id = idOf(property);
-    if (!id) return;
+    // An unreadable id disables the button rather than reaching here, so this
+    // only fires if that guard is ever wrong — say so instead of doing nothing.
+    if (!id) {
+      console.warn('[AGF] 物件番号を読み取れません:', property.url);
+      return;
+    }
     void (favoriteIds.has(id) ? unstar(id) : star(property));
   }
 
@@ -460,7 +507,8 @@
     {#if tab === 'fav' && visible.length === 0}
       <p class="empty">
         まだお気に入りがありません。<br />
-        カードの ☆ を押すと、athome のお気に入りに登録してこの検索結果から外します。
+        カードの ☆ を押すと、athome のお気に入りに登録してこの検索結果から外します。<br />
+        ★ を押し直すと、athome 側からも解除します。
       </p>
     {:else if visible.length === 0}
       <p class="empty">該当する物件がありません。</p>
@@ -471,6 +519,7 @@
             {property}
             favorited={favoriteIds.has(idOf(property))}
             busy={pending.includes(idOf(property))}
+            favouritable={isFavouritable(idOf(property))}
             note={noteFor(idOf(property))}
             onfavorite={() => toggleStar(property)}
           />
@@ -629,14 +678,6 @@
     display: flex;
     justify-content: center;
     padding: 24px 0 4px;
-  }
-  .hint {
-    margin: 0;
-    padding: 8px 20px;
-    background: var(--agf-ok-soft);
-    border-bottom: 1px solid var(--agf-border);
-    font-size: 11px;
-    color: #555;
   }
   .empty {
     color: var(--agf-muted);
