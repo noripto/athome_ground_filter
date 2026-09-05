@@ -2,6 +2,13 @@ import { buildPageUrl, canonicalSearchKey, expectedPages } from '../src/lib/craw
 import { isFresh } from '../src/lib/db';
 import { favoriteBody, isFavouritable, reconcile, unfavoriteBody } from '../src/lib/favorite';
 import {
+  narrowBasic,
+  pickStep,
+  readBasic,
+  writeBasic,
+  type ConditionOptions
+} from '../src/lib/search-url';
+import {
   parseAreaSqm,
   parsePriceMan,
   parseWalkMinutes,
@@ -669,6 +676,58 @@ eq(
   const empty = reconcile(local, []);
   eq('空のリストでも送信済みのものだけが候補', empty.toDrop.join(','), '1000000001,1000000002');
   eq('空のリストなら取り込むものは無い', empty.toImport.length, 0);
+}
+
+{
+  const price = [
+    { code: 'kp001', label: '下限なし', value: null },
+    { code: 'kp005', label: '2,000万円', value: 2000 },
+    { code: 'kp007', label: '3,000万円', value: 3000 },
+    { code: 'kp120', label: '5,000万円', value: 5000 }
+  ];
+  const area = [
+    { code: 'kf001', label: '指定なし', value: null },
+    { code: 'kf008', label: '100m²以上', value: 100 },
+    { code: 'kf010', label: '150m²以上', value: 150 }
+  ];
+  const walk = [
+    { code: 'ke001', label: '指定なし', value: null },
+    { code: 'ke004', label: '10分以内', value: 10 },
+    { code: 'ke006', label: '20分以内', value: 20 }
+  ];
+
+  eq('上限は取りこぼさない側へ切り上げる', pickStep(price, 2500, 'upper')?.code, 'kp007');
+  eq('下限は取りこぼさない側へ切り下げる', pickStep(area, 120, 'lower')?.code, 'kf008');
+  eq('段が一致すればその段', pickStep(price, 3000, 'upper')?.code, 'kp007');
+  eq('刻みより厳しい上限は一番狭い段に丸める', pickStep(price, 500, 'upper')?.code, 'kp005');
+  eq('刻みより緩い下限は諦める', pickStep(area, 10, 'lower'), null);
+  eq('全段より緩い上限は諦める', pickStep(price, 90_000, 'upper'), null);
+  eq('指定なしの段は候補にしない', pickStep(area, 10, 'lower'), null);
+
+  const options: ConditionOptions = { PRICETO: price, TOCHIMENSEKI: area, EKITOHO: walk };
+  const filters = getDefaultSettings().filters;
+  filters.kakaku = { enabled: true, min: null, max: 2500 };
+  filters.menseki = { enabled: true, min: 120, max: null };
+  filters.ekitoho = { enabled: true, min: null, max: 12 };
+
+  const narrowed = narrowBasic(['kp299', 'kp120', 'kp001', 'kf001', 'ke001'], options, filters);
+  eq('該当する枠だけ差し替える', narrowed.codes.join(','), 'kp007,kp001,kf008,ke006');
+  eq('価格を絞ったら価格未定を外す', narrowed.codes.includes('kp299'), false);
+
+  // athome 側が既に厳しいなら、そちらを残す。緩める方向には決して動かさない。
+  const stricter = narrowBasic(['kp005', 'kf010', 'ke004'], options, filters);
+  eq('athome 側の厳しい上限は残す', stricter.codes.includes('kp005'), true);
+  eq('athome 側の厳しい下限は残す', stricter.codes.includes('kf010'), true);
+  eq('athome 側の厳しい駅徒歩は残す', stricter.codes.includes('ke004'), true);
+  eq('何も変えないなら applied は空', stricter.applied.length, 0);
+
+  const off = getDefaultSettings().filters;
+  eq('無効なフィルターは渡さない', narrowBasic(['kp120'], options, off).applied.length, 0);
+
+  const url = 'https://www.athome.co.jp/tochi/chiba/list/?pref=12&basic=kp120,kp001&q=1';
+  eq('basic を読む', readBasic(url).join(','), 'kp120,kp001');
+  eq('basic を書き戻しても他のクエリは残る', writeBasic(url, ['kp007']).includes('pref=12'), true);
+  eq('basic だけ差し替わる', readBasic(writeBasic(url, ['kp007'])).join(','), 'kp007');
 }
 
 await Promise.all(cancelChecks);

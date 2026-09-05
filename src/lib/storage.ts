@@ -24,6 +24,7 @@ function normalize(stored: Partial<Settings> | undefined): Settings {
     requestDelayMs: stored.requestDelayMs ?? defaults.requestDelayMs,
     detailMaxAgeDays: stored.detailMaxAgeDays ?? defaults.detailMaxAgeDays,
     keepExcluded: stored.keepExcluded ?? defaults.keepExcluded,
+    narrowOnAthome: stored.narrowOnAthome ?? defaults.narrowOnAthome,
     filters
   };
 }

@@ -63,6 +63,7 @@ export interface Settings {
   requestDelayMs: number;
   detailMaxAgeDays: number;
   keepExcluded: boolean;
+  narrowOnAthome: boolean;
   filters: FilterSettings;
 }
 
@@ -119,6 +120,7 @@ export interface Favorite {
   addedAt: number;
   property: PropertyResult;
   origin?: 'extension' | 'athome';
+  detailAt?: number;
   remote: RemoteState;
   remoteNote: string;
 }
@@ -142,5 +144,7 @@ export interface ResultSet {
   inspectLimit: number;
   activeFilters: string[];
   source?: 'state' | 'cards' | 'links' | null;
+  narrowedBy?: string[];
+  countBefore?: number | null;
   properties: PropertyResult[];
 }

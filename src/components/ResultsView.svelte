@@ -11,10 +11,19 @@
     type ViewFilter
   } from '../lib/view';
   import { sendFavorite, sendFavoriteList, sendUnfavorite } from '../lib/athome-tab';
-  import { deleteFavorite, getDetail, getListing, listFavorites, putFavorite } from '../lib/db';
+  import { fetchDetail } from '../lib/crawler';
+  import {
+    deleteFavorite,
+    getDetail,
+    getListing,
+    listFavorites,
+    putDetail,
+    putFavorite
+  } from '../lib/db';
+  import { evaluate } from '../lib/evaluate';
   import { isFavouritable, reconcile } from '../lib/favorite';
   import { detailIdFromUrl } from '../lib/markup';
-  import { loadFavoriteSync, saveFavoriteSync } from '../lib/storage';
+  import { loadFavoriteSync, loadSettings, saveFavoriteSync } from '../lib/storage';
   import type { Favorite, FilterSettings, PropertyResult, ResultSet, Settings } from '../lib/types';
 
   type Tab = 'ok' | 'ng' | 'all' | 'fav';
@@ -53,6 +62,22 @@
     favorites = stored.sort((a, b) => b.addedAt - a.addedAt);
   });
   loadFavoriteSync().then(at => (syncedAt = at));
+
+  let judgeWith = $state<FilterSettings | null>(null);
+  loadSettings().then(loaded => (judgeWith = loaded.filters));
+
+  const detailUrl = (id: string) => `https://www.athome.co.jp/tochi/${id}/`;
+
+  type Described = Omit<PropertyResult, 'url' | 'passed' | 'reasons' | 'fields'>;
+
+  function asProperty(
+    url: string,
+    fields: PropertyResult['fields'],
+    rest: Described
+  ): PropertyResult {
+    const reasons = judgeWith ? evaluate(judgeWith, fields) : [];
+    return { url, passed: reasons.length === 0, reasons, fields, ...rest };
+  }
 
   $effect(() => {
     if (tab !== 'fav' || syncedOnce) return;
@@ -205,25 +230,86 @@
   }
 
   async function importFavorite(id: string): Promise<void> {
-    const source = (await getDetail(id)) ?? (await getListing(id));
+    const detail = await getDetail(id);
+    const source = detail ?? (await getListing(id));
     await remember({
       id,
       addedAt: Date.now(),
-      property: {
-        url: `https://www.athome.co.jp/tochi/${id}/`,
-        passed: true,
-        reasons: [],
+      property: asProperty(detailUrl(id), source?.fields ?? {}, {
         name: source?.name || `物件番号 ${id}`,
         price: source?.price ?? '',
         area: source?.area ?? '',
         location: source?.location ?? '',
-        traffic: source?.traffic ?? '',
-        fields: source?.fields ?? {}
-      },
+        traffic: source?.traffic ?? ''
+      }),
       origin: 'athome',
+      detailAt: detail?.fetchedAt,
       remote: 'ok',
       remoteNote: ''
     });
+  }
+
+  const unresolved = $derived(
+    favorites.filter(entry => entry.origin === 'athome' && entry.detailAt === undefined)
+  );
+
+  async function restore(id: string): Promise<void> {
+    if (pending.includes(id)) return;
+    pending = [...pending, id];
+
+    try {
+      const fetched = await fetchDetail(detailUrl(id));
+      const entry = favorites.find(f => f.id === id);
+      if (!entry) return;
+
+      if (!fetched) {
+        await remember({
+          ...$state.snapshot(entry),
+          remoteNote: '⚠ 詳細ページを取得できませんでした'
+        } as Favorite);
+        return;
+      }
+
+      const fetchedAt = Date.now();
+      void putDetail({ id, fetchedAt, ...fetched });
+
+      await remember({
+        ...($state.snapshot(entry) as Favorite),
+        property: asProperty(detailUrl(id), fetched.fields, {
+          name: fetched.name,
+          price: fetched.price,
+          area: fetched.area,
+          location: fetched.location,
+          traffic: fetched.traffic
+        }),
+        detailAt: fetchedAt,
+        remoteNote: ''
+      });
+    } finally {
+      pending = pending.filter(other => other !== id);
+    }
+  }
+
+  async function restoreAll(): Promise<void> {
+    const ids = unresolved.map(entry => entry.id);
+    if (ids.length === 0 || bulk) return;
+
+    stopBulk = false;
+    bulk = { done: 0, total: ids.length, failed: 0 };
+
+    for (const id of ids) {
+      if (stopBulk) break;
+      await restore(id);
+      const entry = favorites.find(f => f.id === id);
+      bulk = {
+        done: bulk.done + 1,
+        total: bulk.total,
+        failed: bulk.failed + (entry?.detailAt === undefined ? 1 : 0)
+      };
+      if (!stopBulk) await wait(BULK_DELAY_MS);
+    }
+
+    bulk = null;
   }
 
   async function sync(): Promise<void> {
@@ -359,7 +445,11 @@
           <span class="stat">キャッシュ {results.cached}件</span>
         {/if}
         {#if results.totalCount != null}
-          <span class="stat">検索該当 {results.totalCount.toLocaleString('ja-JP')}件</span>
+          <span class="stat">
+            検索該当 {#if results.countBefore != null && results.countBefore !== results.totalCount}
+              {results.countBefore.toLocaleString('ja-JP')} →
+            {/if}{results.totalCount.toLocaleString('ja-JP')}件
+          </span>
         {/if}
       </div>
       {#if stopNote}
@@ -372,6 +462,9 @@
       {/if}
       {#if sourceNote}
         <div class="meta" class:warn={results.source !== 'state'}>{sourceNote}</div>
+      {/if}
+      {#if results.narrowedBy?.length}
+        <div class="meta">athome 側で絞り込み: {results.narrowedBy.join(' ／ ')}</div>
       {/if}
       {#if results.activeFilters.length}
         <div class="meta">適用条件: {results.activeFilters.join(' ／ ')}</div>
@@ -519,6 +612,15 @@
       {/if}
     </div>
 
+    {#if unresolved.length && !bulk}
+      <div class="orphans">
+        <span>athome 側で登録された {unresolved.length}件は詳細が未取得です（条件は未判定）</span>
+        <button type="button" class="agf-btn agf-btn-secondary" onclick={restoreAll}>
+          {unresolved.length}件の詳細をまとめて読む
+        </button>
+      </div>
+    {/if}
+
     {#if orphans.length}
       <div class="orphans">
         <span>⚠ athome 側にない★が {orphans.length}件あります（athome で解除された可能性）</span>
@@ -547,6 +649,8 @@
             busy={pending.includes(idOf(property))}
             favouritable={isFavouritable(idOf(property))}
             origin={favorites.find(f => f.id === idOf(property))?.origin}
+            resolved={favorites.find(f => f.id === idOf(property))?.detailAt !== undefined}
+            onrestore={() => void restore(idOf(property))}
             note={noteFor(idOf(property))}
             onfavorite={() => toggleStar(property)}
           />

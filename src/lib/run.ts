@@ -1,5 +1,6 @@
 import { MAX_DETAIL_FETCHES } from './config';
 import {
+  buildPageUrl,
   canonicalSearchKey,
   fetchDetail,
   newListCrawlReport,
@@ -9,7 +10,9 @@ import {
 } from './crawler';
 import { getDetail, isFresh, putDetail, putListing, putSearch } from './db';
 import { describeActiveFilters, evaluate } from './evaluate';
-import { AbortedError, BlockedError, newPacer, paceDelay, sleep } from './fetcher';
+import { AbortedError, BlockedError, fetchPage, newPacer, paceDelay, sleep } from './fetcher';
+import { parseTotalCount } from './markup';
+import { narrowSearchUrl } from './search-url';
 import type { Detail, Listing, PropertyResult, ResultSet, Settings, StopReason } from './types';
 
 export interface RunTallies {
@@ -94,7 +97,6 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
   const report = newListCrawlReport();
   const pacer = newPacer();
   const startedAt = Date.now();
-  const searchKey = canonicalSearchKey(searchUrl);
   const maxAgeMs = settings.detailMaxAgeDays * 24 * 60 * 60 * 1000;
   const seenIds: string[] = [];
   let inspected = 0;
@@ -121,8 +123,35 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
     onProperty?.(property);
   };
 
+  let crawlUrl = searchUrl;
+  let narrowedBy: string[] = [];
+  let countBefore: number | null = null;
+
+  if (settings.narrowOnAthome) {
+    onProgress?.({
+      phase: 'list',
+      message: 'athome 側で絞り込めるか確認中…',
+      current: 0,
+      total: target,
+      tallies: tallies()
+    });
+
+    try {
+      const first = await fetchPage(buildPageUrl(searchUrl, 1), { signal, pacer });
+      if (first.kind === 'ok') {
+        countBefore = parseTotalCount(first.html);
+        const narrowed = narrowSearchUrl(searchUrl, first.doc, settings.filters);
+        crawlUrl = narrowed.url;
+        narrowedBy = narrowed.applied;
+      }
+    } catch (err) {
+      if (err instanceof AbortedError) throw err;
+      console.warn('[AGF] athome 側の絞り込みを省略しました:', err);
+    }
+  }
+
   const listings = streamListings({
-    baseUrl: searchUrl,
+    baseUrl: crawlUrl,
     delayMs: settings.requestDelayMs,
     signal,
     pacer,
@@ -212,8 +241,8 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
   const stoppedBy = resolveStopReason(report, passed, target, inspected, inspectLimit);
 
   await putSearch({
-    searchKey,
-    searchUrl,
+    searchKey: canonicalSearchKey(crawlUrl),
+    searchUrl: crawlUrl,
     totalCount: report.totalCount,
     pagesCrawled: report.pagesCrawled,
     listingIds: seenIds,
@@ -233,7 +262,9 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
 
   return {
     timestamp: Date.now(),
-    searchUrl,
+    searchUrl: crawlUrl,
+    narrowedBy,
+    countBefore,
     requested: target,
     totalCount: report.totalCount,
     inspected,
