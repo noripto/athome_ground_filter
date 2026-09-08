@@ -23,7 +23,16 @@
   import { evaluate } from '../lib/evaluate';
   import { isFavouritable, reconcile } from '../lib/favorite';
   import { detailIdFromUrl } from '../lib/markup';
-  import { loadFavoriteSync, loadSettings, saveFavoriteSync } from '../lib/storage';
+  import {
+    UNKNOWN_PARTY,
+    blockedParties,
+    carryParty,
+    groupByParty,
+    withBlockedParty,
+    withParty,
+    withoutBlockedParty
+  } from '../lib/party';
+  import { loadFavoriteSync, loadSettings, saveFavoriteSync, saveSettings } from '../lib/storage';
   import type { Favorite, FilterSettings, PropertyResult, ResultSet, Settings } from '../lib/types';
 
   type Tab = 'ok' | 'ng' | 'all' | 'fav';
@@ -63,8 +72,11 @@
   });
   loadFavoriteSync().then(at => (syncedAt = at));
 
-  let judgeWith = $state<FilterSettings | null>(null);
-  loadSettings().then(loaded => (judgeWith = loaded.filters));
+  let settings = $state<Settings | null>(null);
+  loadSettings().then(loaded => (settings = loaded));
+
+  const judgeWith = $derived(settings?.filters ?? null);
+  const blocked = $derived(settings ? blockedParties(settings.filters) : []);
 
   const detailUrl = (id: string) => `https://www.athome.co.jp/tochi/${id}/`;
 
@@ -128,6 +140,29 @@
 
   const rendered = $derived(visible.slice(0, shown));
   const remaining = $derived(visible.length - rendered.length);
+
+  let grouped = $state(true);
+  let sections = $state<HTMLElement[]>([]);
+
+  const renderedUrls = $derived(new Set(rendered.map(p => p.url)));
+  const shownGroups = $derived(
+    groupByParty(visible)
+      .map(group => ({ ...group, shown: group.items.filter(p => renderedUrls.has(p.url)) }))
+      .filter(group => group.shown.length > 0)
+  );
+
+  function jumpTo(index: number): void {
+    sections[index]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function openPage(event: MouseEvent, url: string): void {
+    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
+      return;
+    }
+    if (typeof chrome === 'undefined' || !chrome.tabs?.create) return;
+    event.preventDefault();
+    void chrome.tabs.create({ url });
+  }
 
   const narrowed = $derived(isViewFilterActive(view) || liveFilters !== null);
   const passedNow = $derived(judged.filter(p => p.passed).length);
@@ -235,7 +270,7 @@
     await remember({
       id,
       addedAt: Date.now(),
-      property: asProperty(detailUrl(id), source?.fields ?? {}, {
+      property: asProperty(detailUrl(id), withParty(source?.fields ?? {}), {
         name: source?.name || `物件番号 ${id}`,
         price: source?.price ?? '',
         area: source?.area ?? '',
@@ -275,7 +310,7 @@
 
       await remember({
         ...($state.snapshot(entry) as Favorite),
-        property: asProperty(detailUrl(id), fetched.fields, {
+        property: asProperty(detailUrl(id), carryParty(entry.property.fields, fetched.fields), {
           name: fetched.name,
           price: fetched.price,
           area: fetched.area,
@@ -350,8 +385,10 @@
     syncedAt === null ? '未同期' : `最終同期 ${new Date(syncedAt).toLocaleString('ja-JP')}`
   );
 
-  async function starAll(): Promise<void> {
-    const targets = visible.filter(p => !favoriteIds.has(idOf(p)));
+  const unstarred = (properties: readonly PropertyResult[]) =>
+    properties.filter(p => !favoriteIds.has(idOf(p)));
+
+  async function starMany(targets: readonly PropertyResult[]): Promise<void> {
     if (targets.length === 0 || bulk) return;
 
     stopBulk = false;
@@ -372,7 +409,27 @@
     bulk = null;
   }
 
+  const starAll = () => starMany(unstarred(visible));
+
+  async function applySettings(filters: FilterSettings): Promise<void> {
+    if (!settings) return;
+    const next = $state.snapshot({ ...settings, filters }) as Settings;
+    await saveSettings(next);
+    settings = next;
+    liveFilters = next.filters;
+    refilterSerial++;
+  }
+
+  function blockParty(label: string): void {
+    if (settings) void applySettings(withBlockedParty(settings.filters, label));
+  }
+
+  function unblockParty(label: string): void {
+    if (settings) void applySettings(withoutBlockedParty(settings.filters, label));
+  }
+
   function applyFilters(next: Settings) {
+    settings = next;
     liveFilters = next.filters;
     refilterSerial++;
     refilterOpen = false;
@@ -380,7 +437,7 @@
 
   function resetView() {
     view = emptyViewFilter();
-    liveFilters = null;
+    liveFilters = blocked.length > 0 && settings ? settings.filters : null;
     refilterSerial++;
   }
 
@@ -424,6 +481,21 @@
     }
   });
 </script>
+
+{#snippet card(property: PropertyResult, showParty: boolean)}
+  <ResultCard
+    {property}
+    {showParty}
+    favorited={favoriteIds.has(idOf(property))}
+    busy={pending.includes(idOf(property))}
+    favouritable={isFavouritable(idOf(property))}
+    origin={favorites.find(f => f.id === idOf(property))?.origin}
+    resolved={favorites.find(f => f.id === idOf(property))?.detailAt !== undefined}
+    onrestore={() => void restore(idOf(property))}
+    note={noteFor(idOf(property))}
+    onfavorite={() => toggleStar(property)}
+  />
+{/snippet}
 
 <div class="view">
   <header class="head">
@@ -503,6 +575,10 @@
       onclick={() => (refilterOpen = !refilterOpen)}
     >
       🔎 条件を変えて絞り込む
+    </button>
+
+    <button type="button" class="tab" class:active={grouped} onclick={() => (grouped = !grouped)}>
+      {grouped ? '🏢 会社ごと' : '📋 従来表示'}
     </button>
 
     {#if bulk}
@@ -591,6 +667,20 @@
     {/if}
   </div>
 
+  {#if blocked.length}
+    <div class="blocked">
+      <span class="blocked-label">🚫 表示しない会社</span>
+      {#each blocked as label (label)}
+        <span class="chip off" title={label}>
+          <span class="chip-name">{label}</span>
+          <button type="button" class="chip-x" title="解除" onclick={() => unblockParty(label)}>
+            ×
+          </button>
+        </span>
+      {/each}
+    </div>
+  {/if}
+
   {#if refilterOpen}
     <div class="refilter">
       <FilterEditor
@@ -641,21 +731,75 @@
     {:else if visible.length === 0}
       <p class="empty">該当する物件がありません。</p>
     {:else}
-      <div class="grid">
-        {#each rendered as property (property.url)}
-          <ResultCard
-            {property}
-            favorited={favoriteIds.has(idOf(property))}
-            busy={pending.includes(idOf(property))}
-            favouritable={isFavouritable(idOf(property))}
-            origin={favorites.find(f => f.id === idOf(property))?.origin}
-            resolved={favorites.find(f => f.id === idOf(property))?.detailAt !== undefined}
-            onrestore={() => void restore(idOf(property))}
-            note={noteFor(idOf(property))}
-            onfavorite={() => toggleStar(property)}
-          />
+      {#if grouped}
+        {#if shownGroups.length > 1}
+          <div class="jump">
+            {#each shownGroups as group, index (group.label)}
+              <button type="button" class="chip" title={group.label} onclick={() => jumpTo(index)}>
+                <span class="chip-name">{group.label}</span>
+                <span class="chip-n">{group.items.length}</span>
+              </button>
+            {/each}
+          </div>
+        {/if}
+
+        {#each shownGroups as group, index (group.label)}
+          <section class="group" bind:this={sections[index]}>
+            <div class="group-head">
+              <h2 class="group-name">
+                🏢
+                {#if group.page}
+                  <a
+                    href={group.page}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onclick={event => openPage(event, group.page)}>{group.label}</a
+                  >
+                {:else}
+                  {group.label}
+                {/if}
+              </h2>
+              <span class="group-count">
+                {group.shown.length === group.items.length
+                  ? `${group.items.length}件`
+                  : `${group.shown.length}/${group.items.length}件`}
+              </span>
+              {#if tab !== 'fav' && !bulk}
+                {@const targets = unstarred(group.shown)}
+                {#if targets.length}
+                  <button
+                    type="button"
+                    class="agf-btn agf-btn-secondary"
+                    onclick={() => void starMany(targets)}
+                  >
+                    ★ この会社の {targets.length}件を登録
+                  </button>
+                {/if}
+              {/if}
+              {#if group.label !== UNKNOWN_PARTY}
+                <button
+                  type="button"
+                  class="agf-btn agf-btn-stop"
+                  onclick={() => blockParty(group.label)}
+                >
+                  🚫 表示しない
+                </button>
+              {/if}
+            </div>
+            <div class="grid">
+              {#each group.shown as property (property.url)}
+                {@render card(property, false)}
+              {/each}
+            </div>
+          </section>
         {/each}
-      </div>
+      {:else}
+        <div class="grid">
+          {#each rendered as property (property.url)}
+            {@render card(property, true)}
+          {/each}
+        </div>
+      {/if}
       {#if remaining > 0}
         <div class="more">
           <button type="button" class="agf-btn agf-btn-secondary" onclick={() => (shown += PAGE)}>
@@ -831,6 +975,101 @@
     border-bottom: 1px solid var(--agf-border);
     font-size: 12px;
     color: #555;
+  }
+  .blocked {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 8px 20px;
+    background: var(--agf-surface);
+    border-bottom: 1px solid var(--agf-border);
+  }
+  .blocked-label {
+    font-size: 11px;
+    color: var(--agf-muted);
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 300px;
+    height: 26px;
+    padding: 0 10px;
+    border: 1px solid #ddd;
+    border-radius: 20px;
+    background: #f8f8f8;
+    font: inherit;
+    font-size: 12px;
+    line-height: 1;
+    color: #555;
+    cursor: pointer;
+  }
+  .chip-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .chip.off {
+    cursor: default;
+    background: var(--agf-accent-soft);
+    border-color: var(--agf-accent-soft);
+    color: var(--agf-accent);
+  }
+  button.chip:hover {
+    background: #eee;
+  }
+  .chip-n {
+    flex-shrink: 0;
+    font-size: 11px;
+    font-weight: 700;
+    color: #999;
+  }
+  .chip-x {
+    flex-shrink: 0;
+    border: none;
+    background: none;
+    font: inherit;
+    font-size: 13px;
+    line-height: 1;
+    color: inherit;
+    cursor: pointer;
+    padding: 0;
+  }
+  .jump {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 18px;
+  }
+  .group {
+    margin-bottom: 28px;
+    scroll-margin-top: 130px;
+  }
+  .group-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--agf-border);
+  }
+  .group-name {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--agf-text);
+    word-break: break-word;
+  }
+  .group-name a {
+    color: var(--agf-link);
+  }
+  .group-count {
+    font-size: 12px;
+    color: var(--agf-muted);
+    margin-right: auto;
   }
   .more {
     display: flex;

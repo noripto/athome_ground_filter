@@ -1,3 +1,4 @@
+import { PARTY_FIELD, PARTY_PAGE_FIELD, partyPageUrl } from './party';
 import type { Listing } from './types';
 
 const STATE_RE = /<script[^>]*id="serverApp-state"[^>]*>([\s\S]*?)<\/script>/;
@@ -80,6 +81,26 @@ function readAccess(access: unknown): string {
     .join(' ／ ');
 }
 
+const AGENT_NAME_KEYS = ['name', 'kaishaName', 'companyName', 'shopName', 'tenpoName', 'title'];
+
+function readAgent(value: unknown): string {
+  if (!Array.isArray(value)) return '';
+
+  for (const entry of value) {
+    const direct = text(entry);
+    if (direct) return direct;
+
+    const agent = record(entry);
+    if (!agent) continue;
+    for (const key of AGENT_NAME_KEYS) {
+      const name = meaningful(agent[key]);
+      if (name) return name;
+    }
+  }
+
+  return '';
+}
+
 function toListing(entry: Record<string, unknown>): Listing | null {
   const id = text(entry.bukkenNo);
   if (!id) return null;
@@ -104,6 +125,11 @@ function toListing(entry: Record<string, unknown>): Listing | null {
   put('容積率', meaningful(entry.floorAreaRatio));
   put('私道負担面積', meaningful(entry.priroad));
   put('種目', meaningful(detail?.syumoku));
+  put(
+    PARTY_FIELD,
+    meaningful(entry.inquiry) || readAgent(record(entry.kaiinDetailData)?.salesAgent)
+  );
+  put(PARTY_PAGE_FIELD, partyPageUrl(text(entry.urlLong)));
 
   return {
     id,

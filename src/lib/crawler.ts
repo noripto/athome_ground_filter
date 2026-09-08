@@ -13,11 +13,13 @@ import {
 import {
   bareListing,
   extractDetailLinks,
+  parseCompany,
   parseDetailFields,
   parseListingCards,
   parseTotalCount,
   readDetailName
 } from './markup';
+import { LISTED_COMPANY_FIELD, PARTY_PAGE_FIELD } from './party';
 import { listingsFromState } from './state';
 import type { Listing, PropertyResult, StopReason } from './types';
 
@@ -194,6 +196,10 @@ export async function fetchDetail(
   const doc = outcome.doc;
   const fields = parseDetailFields(doc);
   const location = findField(fields, '所在地');
+
+  const company = parseCompany(doc, url);
+  if (company.name) fields[LISTED_COMPANY_FIELD] = company.name;
+  if (company.page) fields[PARTY_PAGE_FIELD] = company.page;
 
   return {
     fields,
