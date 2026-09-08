@@ -1,8 +1,9 @@
 import { evaluate } from './evaluate';
 import { parseAreaSqm, parsePriceMan, parseWalkMinutes, unitPriceManPerTsubo } from './numbers';
+import { compareParty } from './party';
 import type { FilterSettings, PropertyResult } from './types';
 
-export type SortKey = 'found' | 'price' | 'area' | 'unitPrice' | 'walk';
+export type SortKey = 'found' | 'price' | 'area' | 'unitPrice' | 'walk' | 'inquiry';
 
 export interface SortOption {
   key: SortKey;
@@ -17,7 +18,8 @@ export const SORT_OPTIONS: SortOption[] = [
   { key: 'area', label: '面積が広い', ascending: false },
   { key: 'area', label: '面積が狭い', ascending: true },
   { key: 'unitPrice', label: '坪単価が安い', ascending: true },
-  { key: 'walk', label: '駅から近い', ascending: true }
+  { key: 'walk', label: '駅から近い', ascending: true },
+  { key: 'inquiry', label: '問い合わせ先順', ascending: true }
 ];
 
 export interface Metrics {
@@ -49,6 +51,7 @@ function metricFor(metrics: Metrics, key: SortKey): number | null {
     case 'walk':
       return metrics.walkMinutes;
     case 'found':
+    case 'inquiry':
       return null;
   }
 }
@@ -59,6 +62,13 @@ export function sortProperties(
 ): PropertyResult[] {
   if (option.key === 'found') {
     return option.ascending ? [...properties] : [...properties].reverse();
+  }
+
+  if (option.key === 'inquiry') {
+    return properties
+      .map((property, index) => ({ property, index }))
+      .sort((a, b) => compareParty(a.property, b.property) || a.index - b.index)
+      .map(entry => entry.property);
   }
 
   const direction = option.ascending ? 1 : -1;

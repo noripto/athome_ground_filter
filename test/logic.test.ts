@@ -35,7 +35,17 @@ import {
   sleep
 } from '../src/lib/fetcher';
 import type { ListCrawlReport } from '../src/lib/crawler';
-import type { Favorite } from '../src/lib/types';
+import {
+  UNKNOWN_PARTY,
+  blockedParties,
+  carryParty,
+  groupByParty,
+  partyOf,
+  withBlockedParty,
+  withParty,
+  withoutBlockedParty
+} from '../src/lib/party';
+import type { Favorite, PropertyResult } from '../src/lib/types';
 
 let failures = 0;
 
@@ -176,12 +186,16 @@ const stateFixture =
   '"location":"八王子市 長房町798","access":[{"accessText":"ＪＲ中央線 「西八王子」駅 徒歩25～29分",' +
   '"accessEkiToho":"25分"},{"accessText":""}],"right":"所有権",' +
   '"buildingCoverageRatio":"40%","floorAreaRatio":"80%","priroad":"-",' +
-  '"propertyDetailData":{"syumoku":"建築条件付き土地"},"urlLong":"/ahto/hcj"}]}}}' +
+  '"propertyDetailData":{"syumoku":"建築条件付き土地"},' +
+  '"inquiry":"積水ハウス(株)　千葉支店","urlLong":"/ahto/hcj"},' +
+  '{"bukkenNo":"3918978902","title":"名無しの土地","location":"八王子市 長房町799"},' +
+  '{"bukkenNo":"3918978903","title":"提携の土地","location":"八王子市 長房町800",' +
+  '"kaiinDetailData":{"salesAgent":[{"name":"みらい住販(株)"}]}}]}}}' +
   '</script>';
 
 const fromState = listingsFromState(stateFixture);
 
-eq('the transfer state yields its properties', fromState.length, 1);
+eq('the transfer state yields its properties', fromState.length, 3);
 eq('the property id comes from bukkenNo', fromState[0]?.id, '3918978901');
 eq(
   'the detail URL is built from the id, not urlLong',
@@ -197,6 +211,26 @@ eq(
     fromState[0]?.fields['容積率']
   ],
   ['所有権', '40%', '80%']
+);
+eq(
+  '問い合わせ先は一覧から取れる',
+  fromState[0]?.fields['問い合わせ先'],
+  '積水ハウス(株)　千葉支店'
+);
+eq(
+  '会社ページは絶対URLになる',
+  fromState[0]?.fields['会社ページ'],
+  'https://www.athome.co.jp/ahto/hcj'
+);
+eq(
+  '問い合わせ先が無ければキーごと生えない',
+  ['問い合わせ先' in (fromState[1]?.fields ?? {}), '会社ページ' in (fromState[1]?.fields ?? {})],
+  [false, false]
+);
+eq(
+  '問い合わせ先が無ければ掲載不動産会社を使う',
+  fromState[2]?.fields['問い合わせ先'],
+  'みらい住販(株)'
 );
 eq('a dash is not kept as a value', '私道負担面積' in (fromState[0]?.fields ?? {}), false);
 eq('a page with no state yields nothing', listingsFromState('<html></html>').length, 0);
@@ -728,6 +762,117 @@ eq(
   eq('basic を読む', readBasic(url).join(','), 'kp120,kp001');
   eq('basic を書き戻しても他のクエリは残る', writeBasic(url, ['kp007']).includes('pref=12'), true);
   eq('basic だけ差し替わる', readBasic(writeBasic(url, ['kp007'])).join(','), 'kp007');
+}
+
+{
+  const carded = (name: string, party: string): PropertyResult => ({
+    ...property(name, '1,000万円'),
+    fields: party
+      ? { 問い合わせ先: party, 会社ページ: `https://www.athome.co.jp/ahch/${name}` }
+      : {}
+  });
+
+  const listed = [
+    carded('a', 'さくら不動産'),
+    carded('b', 'あおぞら地所'),
+    carded('c', ''),
+    carded('d', 'さくら不動産')
+  ];
+
+  const groups = groupByParty(listed);
+  eq(
+    '会社ごとにまとまり五十音順に並ぶ',
+    groups.map(g => g.label),
+    ['あおぞら地所', 'さくら不動産', UNKNOWN_PARTY]
+  );
+  eq(
+    'グループの件数が合う',
+    groups.map(g => g.items.length),
+    [1, 2, 1]
+  );
+  eq('会社ページも拾う', groups[0]?.page, 'https://www.athome.co.jp/ahch/b');
+  eq('会社名なしのグループに会社ページは無い', groups[2]?.page, '');
+
+  eq(
+    '問い合わせ先順は会社名なしが最後、同着は元の順',
+    sortProperties(listed, { key: 'inquiry', label: '', ascending: true }).map(p => p.name),
+    ['b', 'a', 'd', 'c']
+  );
+
+  eq(
+    '会社名だけを引き継ぐ',
+    carryParty({ 問い合わせ先: 'さくら不動産', 価格: '一覧' }, { 価格: '詳細' }),
+    { 価格: '詳細', 問い合わせ先: 'さくら不動産' }
+  );
+  eq(
+    '詳細側に会社名があればそちらが勝つ',
+    carryParty({ 問い合わせ先: '一覧' }, { 問い合わせ先: '詳細' })['問い合わせ先'],
+    '詳細'
+  );
+
+  eq('問い合わせ先が無ければ掲載不動産会社を読む', partyOf({ 掲載不動産会社: 'X社' }), 'X社');
+  eq(
+    '問い合わせ先があればそちらが優先される',
+    partyOf({ 問い合わせ先: 'A社', 掲載不動産会社: 'B社' }),
+    'A社'
+  );
+  eq('どちらも無ければ空', partyOf({ 価格: '1,000万円' }), '');
+  eq(
+    '掲載不動産会社は問い合わせ先の欄に正規化される',
+    withParty({ 掲載不動産会社: 'X社' })['問い合わせ先'],
+    'X社'
+  );
+  eq(
+    '一覧の問い合わせ先は詳細の掲載不動産会社より強い',
+    carryParty({ 問い合わせ先: '一覧' }, { 掲載不動産会社: 'X社' })['問い合わせ先'],
+    '一覧'
+  );
+  eq(
+    '会社名と会社ページは対で動く',
+    (() => {
+      const merged = carryParty(
+        { 問い合わせ先: '一覧', 会社ページ: '一覧のURL' },
+        { 掲載不動産会社: 'X社', 会社ページ: '詳細のURL' }
+      );
+      return [merged['問い合わせ先'], merged['会社ページ']];
+    })(),
+    ['一覧', '一覧のURL']
+  );
+  eq(
+    '一覧に会社名が無ければ詳細の会社名とURLを使う',
+    (() => {
+      const merged = carryParty({}, { 掲載不動産会社: 'X社', 会社ページ: '詳細のURL' });
+      return [merged['問い合わせ先'], merged['会社ページ']];
+    })(),
+    ['X社', '詳細のURL']
+  );
+  eq(
+    '掲載不動産会社しか無くても非表示にできる',
+    evaluate(
+      withBlockedParty(getDefaultSettings().filters, 'X社'),
+      withParty({ 掲載不動産会社: 'X社' })
+    ).length,
+    1
+  );
+
+  const base = getDefaultSettings().filters;
+  const once = withBlockedParty(base, 'さくら不動産');
+  eq('非表示にすると有効になる', blockedParties(once), ['さくら不動産']);
+  eq('同じ会社は重ねて入らない', blockedParties(withBlockedParty(once, 'さくら不動産')), [
+    'さくら不動産'
+  ]);
+  eq('無効なうちは非表示として数えない', blockedParties(base), []);
+  eq(
+    '他の条件は壊さない',
+    describeActiveFilters(once).length,
+    describeActiveFilters(base).length + 1
+  );
+  eq('解除すると空になる', blockedParties(withoutBlockedParty(once, 'さくら不動産')), []);
+  eq(
+    '非表示の会社は支店込みでも除外理由になる',
+    evaluate(once, { 問い合わせ先: 'さくら不動産 千葉支店' }).length,
+    1
+  );
 }
 
 await Promise.all(cancelChecks);

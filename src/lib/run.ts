@@ -12,6 +12,7 @@ import { getDetail, isFresh, putDetail, putListing, putSearch } from './db';
 import { describeActiveFilters, evaluate } from './evaluate';
 import { AbortedError, BlockedError, fetchPage, newPacer, paceDelay, sleep } from './fetcher';
 import { parseTotalCount } from './markup';
+import { carryParty } from './party';
 import { narrowSearchUrl } from './search-url';
 import type { Detail, Listing, PropertyResult, ResultSet, Settings, StopReason } from './types';
 
@@ -217,7 +218,8 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
         void putDetail(detail);
       }
 
-      const reasons = evaluate(settings.filters, detail.fields);
+      const fields = carryParty(listing.fields, detail.fields);
+      const reasons = evaluate(settings.filters, fields);
       if (reasons.length === 0) passed++;
       else excluded++;
       record({
@@ -229,7 +231,7 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
         area: detail.area,
         location: detail.location,
         traffic: detail.traffic,
-        fields: detail.fields
+        fields
       });
     }
   } catch (err) {

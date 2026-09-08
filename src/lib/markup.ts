@@ -7,6 +7,8 @@ const TOTAL_COUNT_RE = /area-top__property--number[^>]*>\s*([\d,]+)\s*</;
 
 const CARD_SELECTOR = '.card-box-inner';
 
+const COMPANY_SELECTOR = '.company-info-area .head__name';
+
 function detailUrlFromId(id: string): string {
   return `https://www.athome.co.jp/tochi/${id}/`;
 }
@@ -77,6 +79,24 @@ export function parseDetailFields(doc: Document): Record<string, string> {
   }
 
   return fields;
+}
+
+export function parseCompany(doc: Document, baseUrl: string): { name: string; page: string } {
+  const holder = doc.querySelector(COMPANY_SELECTOR);
+  if (!holder) return { name: '', page: '' };
+
+  const anchor = holder.querySelector('a[href]');
+  const name = (anchor ?? holder).textContent?.replace(/\s+/g, ' ').trim() ?? '';
+  const href = anchor?.getAttribute('href');
+
+  let page = '';
+  if (href) {
+    try {
+      page = new URL(href, baseUrl).href;
+    } catch {}
+  }
+
+  return { name, page };
 }
 
 export function readDetailName(

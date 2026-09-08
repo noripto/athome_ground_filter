@@ -1,3 +1,4 @@
+import { PARTY_FIELD, PARTY_FILTER_ID } from './party';
 import type { FilterDef, FilterSettings, Settings } from './types';
 
 export const DISPLAY_FIELDS = [
@@ -115,6 +116,16 @@ export const FILTER_DEFS: FilterDef[] = [
     hints: ['売主', '代理', '一般媒介', '専任媒介', '専属専任']
   },
   {
+    id: PARTY_FILTER_ID,
+    label: '問い合わせ先',
+    detailKey: PARTY_FIELD,
+    type: 'exclude_text',
+    defaultEnabled: false,
+    defaultValues: [],
+    hints: [],
+    help: '会社名を含む物件を除外します（部分一致。支店名まで入れればその支店だけ、社名だけなら全支店）'
+  },
+  {
     id: 'suido',
     label: '上水道',
     detailKey: '上水道',
@@ -209,6 +220,7 @@ export const SECTIONS: { title: string; ids: string[] }[] = [
   },
   { title: '接道', ids: ['setsudo'] },
   { title: '権利・取引', ids: ['tochiken', 'torihiki'] },
+  { title: '会社', ids: [PARTY_FILTER_ID] },
   { title: 'インフラ', ids: ['suido', 'gesui', 'gas', 'denki'] },
   { title: '数値範囲', ids: ['kenpeito', 'yosekiritsu', 'menseki', 'kakaku', 'ekitoho'] }
 ];

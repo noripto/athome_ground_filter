@@ -1,6 +1,7 @@
 <script lang="ts">
   import { DISPLAY_FIELDS } from '../lib/config';
   import { findField, narrowestRoadWidth } from '../lib/evaluate';
+  import { partyOf } from '../lib/party';
   import type { PropertyResult } from '../lib/types';
 
   interface Props {
@@ -14,6 +15,7 @@
     origin?: 'extension' | 'athome';
     resolved?: boolean;
     onrestore?: () => void;
+    showParty?: boolean;
   }
 
   let {
@@ -26,8 +28,11 @@
     note = '',
     origin = undefined,
     resolved = true,
-    onrestore
+    onrestore,
+    showParty = true
   }: Props = $props();
+
+  const party = $derived(partyOf(property.fields));
 
   const shownFields = $derived(
     DISPLAY_FIELDS.map(key => ({ key, value: findField(property.fields, key) }))
@@ -65,6 +70,9 @@
     </div>
   {:else if origin === 'athome'}
     <div class="origin">athome 側で登録された物件</div>
+  {/if}
+  {#if showParty && party}
+    <div class="party">🏢 {party}</div>
   {/if}
   {#if note}
     <div class="note">{note}</div>
@@ -203,6 +211,12 @@
   .restore:disabled {
     cursor: progress;
   }
+  .party {
+    font-size: 11px;
+    color: var(--agf-muted);
+    line-height: 1.6;
+    word-break: break-word;
+  }
   .note {
     font-size: 11px;
     color: var(--agf-accent);
@@ -293,12 +307,17 @@
   .actions {
     display: flex;
     gap: 8px;
-    margin-top: 10px;
+    margin-top: auto;
+    padding-top: 10px;
   }
 
   .btn {
     flex: 1;
-    display: block;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    min-height: 32px;
     padding: 7px 12px;
     border: none;
     border-radius: 6px;
@@ -307,6 +326,7 @@
     font: inherit;
     font-size: 12px;
     font-weight: 600;
+    line-height: 1.4;
     color: #fff;
     cursor: pointer;
   }
