@@ -23,6 +23,7 @@
   import { evaluate } from '../lib/evaluate';
   import { isFavouritable, reconcile } from '../lib/favorite';
   import { detailIdFromUrl } from '../lib/markup';
+  import { buildReport, reportWorthy, siteChangeSuspected } from '../lib/report';
   import {
     UNKNOWN_PARTY,
     blockedParties,
@@ -67,13 +68,18 @@
   let orphans = $state<string[]>([]);
   let syncedOnce = false;
 
-  listFavorites().then(stored => {
-    favorites = stored.sort((a, b) => b.addedAt - a.addedAt);
-  });
-  loadFavoriteSync().then(at => (syncedAt = at));
-
   let settings = $state<Settings | null>(null);
-  loadSettings().then(loaded => (settings = loaded));
+
+  // 1つが失敗しても残りは読み込めるように別々に待つ
+  (async () => {
+    favorites = (await listFavorites()).sort((a, b) => b.addedAt - a.addedAt);
+  })();
+  (async () => {
+    syncedAt = await loadFavoriteSync();
+  })();
+  (async () => {
+    settings = await loadSettings();
+  })();
 
   const judgeWith = $derived(settings?.filters ?? null);
   const blocked = $derived(settings ? blockedParties(settings.filters) : []);
@@ -443,6 +449,29 @@
 
   const crawledAt = $derived(new Date(results.timestamp).toLocaleString('ja-JP'));
 
+  const siteChangeNote = $derived.by(() => {
+    if (live || !siteChangeSuspected(results)) return '';
+    const parts = results.missingParts?.length
+      ? `（${results.missingParts.join('・')}が取れてません）`
+      : '';
+    return `🤔 サイト側で変更があったかも${parts}`;
+  });
+
+  let copied = $state(false);
+  let dismissedAt = $state<number | null>(null);
+  const showReport = $derived(!live && reportWorthy(results) && dismissedAt !== results.timestamp);
+
+  async function copyReport() {
+    const text = buildReport(results, chrome.runtime.getManifest().version, navigator.userAgent);
+    try {
+      await navigator.clipboard.writeText(text);
+      copied = true;
+      setTimeout(() => (copied = false), 1500);
+    } catch (err) {
+      console.warn('[AGF] コピーに失敗:', err);
+    }
+  }
+
   const sourceNote = $derived.by(() => {
     switch (results.source) {
       case 'state':
@@ -809,6 +838,21 @@
       {/if}
     {/if}
   </div>
+
+  {#if showReport}
+    <div class="report-bar" role="status">
+      <span class="report-note">{siteChangeNote || stopNote}</span>
+      <button type="button" class="agf-btn agf-btn-secondary" onclick={copyReport}>
+        {copied ? '✓ コピーしました' : '📋 報告用にコピー'}
+      </button>
+      <button
+        type="button"
+        class="report-close"
+        title="閉じる"
+        onclick={() => (dismissedAt = results.timestamp)}>×</button
+      >
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -859,6 +903,30 @@
   .meta.warn {
     opacity: 1;
     color: #ffe9b0;
+  }
+  .report-bar {
+    position: sticky;
+    bottom: 0;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 20px;
+    background: #fff8e1;
+    border-top: 1px solid #f0d68a;
+    box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.12);
+    font-size: 13px;
+  }
+  .report-note {
+    flex: 1;
+  }
+  .report-close {
+    border: none;
+    background: none;
+    font-size: 18px;
+    line-height: 1;
+    color: var(--agf-muted);
+    cursor: pointer;
   }
   .controls {
     background: var(--agf-surface);

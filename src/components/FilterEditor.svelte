@@ -29,12 +29,13 @@
 
   const ownsCache = window.location.protocol === 'chrome-extension:';
 
-  function refreshCacheCount() {
+  async function refreshCacheCount() {
     if (!ownsCache) return;
-    countDetails().then(
-      count => (cachedCount = count),
-      () => (cachedCount = null)
-    );
+    try {
+      cachedCount = await countDetails();
+    } catch {
+      cachedCount = null;
+    }
   }
 
   refreshCacheCount();
@@ -43,16 +44,16 @@
     if (!confirm('保存済みの詳細ページをすべて削除しますか？\n次回の取得は全件を読み直します。'))
       return;
     await clearCache();
-    refreshCacheCount();
+    await refreshCacheCount();
     flash('✓ キャッシュを削除しました');
   }
 
   const activeSummary = $derived(settings ? describeActiveFilters(settings.filters) : []);
   const inspectLimit = $derived(inspectLimitFor(settings?.targetCount ?? 0));
 
-  loadSettings().then(loaded => {
-    settings = loaded;
-  });
+  (async () => {
+    settings = await loadSettings();
+  })();
 
   function flash(message: string) {
     notice = message;

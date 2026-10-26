@@ -54,7 +54,10 @@ export interface NumericRangeState {
 }
 
 export type FilterState =
-  ExcludeTextState | MinRoadWidthState | RequireContainsState | NumericRangeState;
+  | ExcludeTextState
+  | MinRoadWidthState
+  | RequireContainsState
+  | NumericRangeState;
 
 export type FilterSettings = Record<string, FilterState>;
 
@@ -126,7 +129,14 @@ export interface Favorite {
 }
 
 export type StopReason =
-  'target' | 'exhausted' | 'limit' | 'complete' | 'aborted' | 'blocked' | 'http' | 'paging';
+  | 'target'
+  | 'exhausted'
+  | 'limit'
+  | 'complete'
+  | 'aborted'
+  | 'blocked'
+  | 'http'
+  | 'paging';
 
 export interface ResultSet {
   timestamp: number;
@@ -146,5 +156,6 @@ export interface ResultSet {
   source?: 'state' | 'cards' | 'links' | null;
   narrowedBy?: string[];
   countBefore?: number | null;
+  missingParts?: string[];
   properties: PropertyResult[];
 }

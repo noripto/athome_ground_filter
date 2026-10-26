@@ -5,6 +5,7 @@ import {
   fetchDetail,
   newListCrawlReport,
   streamListings,
+  type DetailData,
   type ListCrawlReport,
   type ListingSource
 } from './crawler';
@@ -12,9 +13,27 @@ import { getDetail, isFresh, putDetail, putListing, putSearch } from './db';
 import { describeActiveFilters, evaluate } from './evaluate';
 import { AbortedError, BlockedError, fetchPage, newPacer, paceDelay, sleep } from './fetcher';
 import { parseTotalCount } from './markup';
-import { carryParty } from './party';
+import { carryParty, LISTED_COMPANY_FIELD } from './party';
 import { narrowSearchUrl } from './search-url';
 import type { Detail, Listing, PropertyResult, ResultSet, Settings, StopReason } from './types';
+
+const PART_PROBES: Record<string, (detail: DetailData) => string | undefined> = {
+  会社名: detail => detail.fields[LISTED_COMPANY_FIELD],
+  価格: detail => detail.price,
+  所在地: detail => detail.location,
+  土地面積: detail => detail.area
+};
+
+const MIN_PROBED = 3;
+
+export const missingParts = (
+  probed: number,
+  hits: Readonly<Record<string, number>>,
+  totalCountMissing: boolean
+): string[] => {
+  const parts = probed >= MIN_PROBED ? Object.keys(PART_PROBES).filter(name => !hits[name]) : [];
+  return totalCountMissing ? [...parts, '総件数'] : parts;
+};
 
 export interface RunTallies {
   inspected: number;
@@ -106,6 +125,8 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
   let failed = 0;
   let skipped = 0;
   let cached = 0;
+  let probed = 0;
+  const hits: Record<string, number> = {};
 
   const tallies = (): RunTallies => ({
     inspected,
@@ -214,6 +235,11 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
           continue;
         }
 
+        probed++;
+        for (const [name, read] of Object.entries(PART_PROBES)) {
+          if (read(fetched)) hits[name] = (hits[name] ?? 0) + 1;
+        }
+
         detail = { id: listing.id, fetchedAt: Date.now(), ...fetched };
         void putDetail(detail);
       }
@@ -280,6 +306,7 @@ export async function runFilter(options: RunOptions): Promise<ResultSet> {
     inspectLimit,
     activeFilters: describeActiveFilters(settings.filters),
     source: report.source,
+    missingParts: missingParts(probed, hits, report.pagesCrawled > 0 && report.totalCount === null),
     properties: settings.keepExcluded ? properties : properties.filter(p => p.passed)
   };
 }

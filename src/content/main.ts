@@ -34,6 +34,10 @@ function inject(): void {
   mount(Panel, { target: root });
 }
 
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 function listen(): void {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (isPing(message)) {
@@ -41,31 +45,32 @@ function listen(): void {
       return false;
     }
     if (isFavoritesMessage(message)) {
-      fetchFavoriteIds()
-        .then(sendResponse)
-        .catch((err: unknown) =>
-          sendResponse({
-            ok: false,
-            ids: [],
-            note: err instanceof Error ? err.message : String(err)
-          })
-        );
+      (async () => {
+        try {
+          sendResponse(await fetchFavoriteIds());
+        } catch (err) {
+          sendResponse({ ok: false, ids: [], note: errorText(err) });
+        }
+      })();
       return true;
     }
 
     if (!isFavoriteMessage(message)) return false;
 
     const post = message.type === FAVORITE ? postFavorite : postUnfavorite;
-    post(message.id)
-      .then(outcome => sendResponse({ ...outcome, error: '' } satisfies FavoriteReply))
-      .catch((err: unknown) =>
+    (async () => {
+      try {
+        const outcome = await post(message.id);
+        sendResponse({ ...outcome, error: '' } satisfies FavoriteReply);
+      } catch (err) {
         sendResponse({
           ok: false,
           status: 0,
           body: '',
-          error: err instanceof Error ? err.message : String(err)
-        } satisfies FavoriteReply)
-      );
+          error: errorText(err)
+        } satisfies FavoriteReply);
+      }
+    })();
 
     return true;
   });

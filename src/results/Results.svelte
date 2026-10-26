@@ -67,12 +67,39 @@
     pending = [];
   }
 
-  Promise.all([loadSettings(), loadResults()]).then(([loadedSettings, stored]) => {
-    settings = loadedSettings;
-    results = stored;
-    loaded = true;
-    if (searchUrl && autostart) run();
+  // 隠しコマンド: results.html?demo=broken でサイト変更の注意書きとコピーを確かめる（保存はしない）
+  const demoBroken = params.get('demo') === 'broken';
+
+  const brokenDemo = (base: ResultSet | null): ResultSet => ({
+    ...(base ?? {
+      timestamp: Date.now(),
+      searchUrl: 'https://www.athome.co.jp/tochi/tokyo/list/',
+      requested: 0,
+      totalCount: null,
+      inspected: 0,
+      passed: 0,
+      excluded: 0,
+      failed: 0,
+      skipped: 0,
+      cached: 0,
+      pagesCrawled: 0,
+      stoppedBy: 'paging',
+      inspectLimit: 0,
+      activeFilters: [],
+      properties: []
+    }),
+    stoppedBy: 'paging',
+    source: 'cards',
+    missingParts: ['会社名', '価格']
   });
+
+  (async () => {
+    const [loadedSettings, stored] = await Promise.all([loadSettings(), loadResults()]);
+    settings = loadedSettings;
+    results = demoBroken ? brokenDemo(stored) : stored;
+    loaded = true;
+    if (searchUrl && autostart) await run();
+  })();
 
   $effect(() => {
     if (!running) return;
