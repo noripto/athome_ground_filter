@@ -24,7 +24,8 @@ import {
   narrowestRoadWidth
 } from '../src/lib/evaluate';
 import { getDefaultSettings, LIST_PAGE_SIZE } from '../src/lib/config';
-import { inspectLimitFor, resolveStopReason } from '../src/lib/run';
+import { inspectLimitFor, missingParts, resolveStopReason } from '../src/lib/run';
+import { buildReport, reportWorthy, siteChangeSuspected } from '../src/lib/report';
 import {
   backoffDelay,
   isChallengeHtml,
@@ -873,6 +874,50 @@ eq(
     evaluate(once, { 問い合わせ先: 'さくら不動産 千葉支店' }).length,
     1
   );
+}
+
+{
+  eq('取得が3件未満なら欠けた項目を判定しない', missingParts(2, {}, false), []);
+  eq('1件も取れなかった項目だけ返す', missingParts(5, { 価格: 5, 所在地: 4, 土地面積: 5 }, false), [
+    '会社名'
+  ]);
+  eq('総件数が読めなければ加える', missingParts(0, {}, true), ['総件数']);
+
+  const base = {
+    timestamp: 0,
+    searchUrl: 'https://www.athome.co.jp/tochi/tokyo/list/',
+    requested: 10,
+    totalCount: 100,
+    inspected: 5,
+    passed: 1,
+    excluded: 4,
+    failed: 0,
+    skipped: 0,
+    cached: 0,
+    pagesCrawled: 1,
+    stoppedBy: 'target' as const,
+    inspectLimit: 200,
+    activeFilters: [],
+    source: 'state' as const,
+    properties: []
+  };
+  eq('正常な結果では注意しない', siteChangeSuspected(base), false);
+  eq(
+    '欠けた項目があれば注意する',
+    siteChangeSuspected({ ...base, missingParts: ['会社名'] }),
+    true
+  );
+  eq(
+    '通信エラーはコピーだけ出す',
+    [
+      siteChangeSuspected({ ...base, stoppedBy: 'http' }),
+      reportWorthy({ ...base, stoppedBy: 'http' })
+    ],
+    [false, true]
+  );
+  const reportText = buildReport({ ...base, missingParts: ['会社名', '価格'] }, '1.0.0', 'UA');
+  eq('報告に検索URLが入る', reportText.includes(base.searchUrl), true);
+  eq('報告に欠けた項目が入る', reportText.includes('取れなかった項目: 会社名, 価格'), true);
 }
 
 await Promise.all(cancelChecks);

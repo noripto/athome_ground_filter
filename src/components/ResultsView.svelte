@@ -23,6 +23,7 @@
   import { evaluate } from '../lib/evaluate';
   import { isFavouritable, reconcile } from '../lib/favorite';
   import { detailIdFromUrl } from '../lib/markup';
+  import { buildReport, reportWorthy, siteChangeSuspected } from '../lib/report';
   import {
     UNKNOWN_PARTY,
     blockedParties,
@@ -443,6 +444,27 @@
 
   const crawledAt = $derived(new Date(results.timestamp).toLocaleString('ja-JP'));
 
+  const siteChangeNote = $derived.by(() => {
+    if (live || !siteChangeSuspected(results)) return '';
+    const parts = results.missingParts?.length
+      ? `（${results.missingParts.join('・')}が取れてません）`
+      : '';
+    return `🤔 サイト側で変更があったかも${parts}`;
+  });
+
+  let copied = $state(false);
+
+  async function copyReport() {
+    const text = buildReport(results, chrome.runtime.getManifest().version, navigator.userAgent);
+    try {
+      await navigator.clipboard.writeText(text);
+      copied = true;
+      setTimeout(() => (copied = false), 1500);
+    } catch (err) {
+      console.warn('[AGF] コピーに失敗:', err);
+    }
+  }
+
   const sourceNote = $derived.by(() => {
     switch (results.source) {
       case 'state':
@@ -526,6 +548,14 @@
       </div>
       {#if stopNote}
         <div class="meta warn">{stopNote}</div>
+      {/if}
+      {#if siteChangeNote}
+        <div class="meta warn">{siteChangeNote}</div>
+      {/if}
+      {#if !live && reportWorthy(results)}
+        <button type="button" class="agf-btn agf-btn-ghost report" onclick={copyReport}>
+          {copied ? '✓ コピーしました' : '📋 報告用にコピー'}
+        </button>
       {/if}
       {#if live}
         <div class="meta">取得しながら表示しています。中断してもここまでの結果は残ります。</div>
@@ -859,6 +889,9 @@
   .meta.warn {
     opacity: 1;
     color: #ffe9b0;
+  }
+  .report {
+    margin-top: 6px;
   }
   .controls {
     background: var(--agf-surface);

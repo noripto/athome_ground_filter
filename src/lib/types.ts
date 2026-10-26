@@ -146,5 +146,6 @@ export interface ResultSet {
   source?: 'state' | 'cards' | 'links' | null;
   narrowedBy?: string[];
   countBefore?: number | null;
+  missingParts?: string[];
   properties: PropertyResult[];
 }
