@@ -68,13 +68,18 @@
   let orphans = $state<string[]>([]);
   let syncedOnce = false;
 
-  listFavorites().then(stored => {
-    favorites = stored.sort((a, b) => b.addedAt - a.addedAt);
-  });
-  loadFavoriteSync().then(at => (syncedAt = at));
-
   let settings = $state<Settings | null>(null);
-  loadSettings().then(loaded => (settings = loaded));
+
+  // 1つが失敗しても残りは読み込めるように別々に待つ
+  (async () => {
+    favorites = (await listFavorites()).sort((a, b) => b.addedAt - a.addedAt);
+  })();
+  (async () => {
+    syncedAt = await loadFavoriteSync();
+  })();
+  (async () => {
+    settings = await loadSettings();
+  })();
 
   const judgeWith = $derived(settings?.filters ?? null);
   const blocked = $derived(settings ? blockedParties(settings.filters) : []);
@@ -453,6 +458,8 @@
   });
 
   let copied = $state(false);
+  let dismissedAt = $state<number | null>(null);
+  const showReport = $derived(!live && reportWorthy(results) && dismissedAt !== results.timestamp);
 
   async function copyReport() {
     const text = buildReport(results, chrome.runtime.getManifest().version, navigator.userAgent);
@@ -548,14 +555,6 @@
       </div>
       {#if stopNote}
         <div class="meta warn">{stopNote}</div>
-      {/if}
-      {#if siteChangeNote}
-        <div class="meta warn">{siteChangeNote}</div>
-      {/if}
-      {#if !live && reportWorthy(results)}
-        <button type="button" class="agf-btn agf-btn-ghost report" onclick={copyReport}>
-          {copied ? '✓ コピーしました' : '📋 報告用にコピー'}
-        </button>
       {/if}
       {#if live}
         <div class="meta">取得しながら表示しています。中断してもここまでの結果は残ります。</div>
@@ -839,6 +838,21 @@
       {/if}
     {/if}
   </div>
+
+  {#if showReport}
+    <div class="report-bar" role="status">
+      <span class="report-note">{siteChangeNote || stopNote}</span>
+      <button type="button" class="agf-btn agf-btn-secondary" onclick={copyReport}>
+        {copied ? '✓ コピーしました' : '📋 報告用にコピー'}
+      </button>
+      <button
+        type="button"
+        class="report-close"
+        title="閉じる"
+        onclick={() => (dismissedAt = results.timestamp)}>×</button
+      >
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -890,8 +904,29 @@
     opacity: 1;
     color: #ffe9b0;
   }
-  .report {
-    margin-top: 6px;
+  .report-bar {
+    position: sticky;
+    bottom: 0;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 20px;
+    background: #fff8e1;
+    border-top: 1px solid #f0d68a;
+    box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.12);
+    font-size: 13px;
+  }
+  .report-note {
+    flex: 1;
+  }
+  .report-close {
+    border: none;
+    background: none;
+    font-size: 18px;
+    line-height: 1;
+    color: var(--agf-muted);
+    cursor: pointer;
   }
   .controls {
     background: var(--agf-surface);

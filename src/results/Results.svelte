@@ -93,12 +93,13 @@
     missingParts: ['会社名', '価格']
   });
 
-  Promise.all([loadSettings(), loadResults()]).then(([loadedSettings, stored]) => {
+  (async () => {
+    const [loadedSettings, stored] = await Promise.all([loadSettings(), loadResults()]);
     settings = loadedSettings;
     results = demoBroken ? brokenDemo(stored) : stored;
     loaded = true;
-    if (searchUrl && autostart) run();
-  });
+    if (searchUrl && autostart) await run();
+  })();
 
   $effect(() => {
     if (!running) return;

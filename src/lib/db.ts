@@ -39,20 +39,18 @@ export function openDb(): Promise<IDBDatabase> {
   return opening;
 }
 
-function run<T>(
+async function run<T>(
   store: string,
   mode: IDBTransactionMode,
   work: (store: IDBObjectStore) => IDBRequest<T>
 ): Promise<T> {
-  return openDb().then(
-    db =>
-      new Promise<T>((resolve, reject) => {
-        const tx = db.transaction(store, mode);
-        const request = work(tx.objectStore(store));
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-      })
-  );
+  const db = await openDb();
+  return new Promise<T>((resolve, reject) => {
+    const tx = db.transaction(store, mode);
+    const request = work(tx.objectStore(store));
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
 }
 
 export function isFresh(detail: Detail | undefined, now: number, maxAgeMs: number): boolean {

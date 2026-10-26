@@ -11,9 +11,9 @@
 
   const activeFilters = $derived(settings ? describeActiveFilters(settings.filters) : []);
 
-  loadSettings().then(loaded => {
-    settings = loaded;
-  });
+  (async () => {
+    settings = await loadSettings();
+  })();
 
   $effect(() => onSettingsChanged(next => (settings = next)));
 

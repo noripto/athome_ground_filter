@@ -30,12 +30,18 @@ function normalize(stored: Partial<Settings> | undefined): Settings {
 }
 
 export async function loadSettings(): Promise<Settings> {
-  const stored = await chrome.storage.sync.get(SETTINGS_KEY);
-  return normalize(stored[SETTINGS_KEY]);
+  const stored = await chrome.storage.local.get(SETTINGS_KEY);
+  if (SETTINGS_KEY in stored) return normalize(stored[SETTINGS_KEY]);
+
+  // 1.0.0 までは storage.sync に保存していた。sync 側は消さずに一度だけ local へ写す
+  const legacy = await chrome.storage.sync.get(SETTINGS_KEY);
+  const settings = normalize(legacy[SETTINGS_KEY]);
+  if (SETTINGS_KEY in legacy) await saveSettings(settings);
+  return settings;
 }
 
 export async function saveSettings(settings: Settings): Promise<void> {
-  await chrome.storage.sync.set({ [SETTINGS_KEY]: settings });
+  await chrome.storage.local.set({ [SETTINGS_KEY]: settings });
 }
 
 export async function resetSettings(): Promise<Settings> {
@@ -49,7 +55,7 @@ export function onSettingsChanged(handler: (settings: Settings) => void): () => 
     changes: Record<string, chrome.storage.StorageChange>,
     areaName: string
   ): void => {
-    if (areaName !== 'sync' || !(SETTINGS_KEY in changes)) return;
+    if (areaName !== 'local' || !(SETTINGS_KEY in changes)) return;
     handler(normalize(changes[SETTINGS_KEY].newValue));
   };
   chrome.storage.onChanged.addListener(listener);

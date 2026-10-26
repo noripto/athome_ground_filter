@@ -9,8 +9,9 @@
 
   const activeFilters = $derived(settings ? describeActiveFilters(settings.filters) : []);
 
-  loadSettings().then(loaded => (settings = loaded));
-  loadResults().then(stored => (results = stored));
+  (async () => {
+    [settings, results] = await Promise.all([loadSettings(), loadResults()]);
+  })();
 
   function openOptions() {
     chrome.runtime.openOptionsPage();
